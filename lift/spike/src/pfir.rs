@@ -43,9 +43,33 @@ impl Packed {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum X87 {
+    LoadOne,
+    LoadZero,
+    ChangeSign,
+    Absolute,
+    Add,
+    AddPop,
+}
+
+impl X87 {
+    fn c_operation(self) -> &'static str {
+        match self {
+            Self::LoadOne => "PF_FLD1",
+            Self::LoadZero => "PF_FLDZ",
+            Self::ChangeSign => "PF_FCHS",
+            Self::Absolute => "PF_FABS",
+            Self::Add => "PF_FADD",
+            Self::AddPop => "PF_FADDP",
+        }
+    }
+}
+
 enum Operation {
     Scalar(Arithmetic, bool),
     Packed(Packed),
+    X87(X87),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +114,11 @@ pub enum Effect {
         register: u8,
         from: Value,
     },
+    X87 {
+        operation: X87,
+        destination: u8,
+        source: u8,
+    },
     AdvanceRip(u8),
 }
 
@@ -111,6 +140,12 @@ pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
             Mnemonic::PADDQ => Operation::Packed(Packed::AddQwords),
             Mnemonic::PSUBD => Operation::Packed(Packed::SubDwords),
             Mnemonic::PSUBQ => Operation::Packed(Packed::SubQwords),
+            Mnemonic::FLD1 => Operation::X87(X87::LoadOne),
+            Mnemonic::FLDZ => Operation::X87(X87::LoadZero),
+            Mnemonic::FCHS => Operation::X87(X87::ChangeSign),
+            Mnemonic::FABS => Operation::X87(X87::Absolute),
+            Mnemonic::FADD => Operation::X87(X87::Add),
+            Mnemonic::FADDP => Operation::X87(X87::AddPop),
             mnemonic => {
                 return Err(format!(
                     "decoded {mnemonic} at offset {offset}; no lift available"
@@ -123,6 +158,33 @@ pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
                 instruction.mnemonic
             )
         };
+        if let Operation::X87(operation) = operation {
+            let (destination, source) = match (operation, instruction.visible_operands()) {
+                (X87::Add | X87::AddPop, [destination, source]) => {
+                    let (DecodedOperandKind::Reg(destination), DecodedOperandKind::Reg(source)) =
+                        (&destination.kind, &source.kind)
+                    else {
+                        return Err(unsupported());
+                    };
+                    if destination.class() != RegisterClass::X87
+                        || source.class() != RegisterClass::X87
+                    {
+                        return Err(unsupported());
+                    }
+                    (destination.id(), source.id())
+                }
+                (X87::LoadOne | X87::LoadZero | X87::ChangeSign | X87::Absolute, []) => (0, 0),
+                _ => return Err(unsupported()),
+            };
+            effects.push(Effect::X87 {
+                operation,
+                destination,
+                source,
+            });
+            effects.push(Effect::AdvanceRip(instruction.length));
+            offset += usize::from(instruction.length);
+            continue;
+        }
         let [destination, source] = instruction.visible_operands() else {
             return Err(unsupported());
         };
@@ -202,6 +264,7 @@ pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
                     },
                 ]);
             }
+            Operation::X87(_) => unreachable!("x87 lifted above"),
         }
         effects.push(Effect::AdvanceRip(length));
         next_value += 3;
@@ -289,6 +352,17 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 from: Value(id),
             } => {
                 writeln!(source, "    state->xmm[{register}] = v{id};").unwrap();
+            }
+            Effect::X87 {
+                operation,
+                destination,
+                source: operand,
+            } => {
+                let operation = operation.c_operation();
+                writeln!(source, "    if (!pf_x87_execute(&state->x87, {operation}, {destination}, {operand})) {{").unwrap();
+                writeln!(source, "        state->x87_unsupported = true;").unwrap();
+                writeln!(source, "        return;").unwrap();
+                writeln!(source, "    }}").unwrap();
             }
             Effect::AdvanceRip(bytes) => {
                 writeln!(source, "    state->rip += {bytes};").unwrap();
@@ -419,7 +493,7 @@ mod tests {
     #[test]
     fn distinguishes_decode_failure_from_missing_semantics() {
         assert!(lift(&[0x48, 0x01]).unwrap_err().contains("truncated"));
-        assert!(lift(&[0xd9, 0xe8]).unwrap_err().contains("decoded fld1"));
+        assert!(lift(&[0xd9, 0xfa]).unwrap_err().contains("decoded fsqrt"));
         assert!(lift(&[0x01, 0x08])
             .unwrap_err()
             .contains("unsupported operands"));
@@ -433,5 +507,26 @@ mod tests {
         ] {
             assert!(lift(encoding).is_err(), "{encoding:02x?}");
         }
+    }
+    #[test]
+    fn lifts_both_x87_add_directions_and_rejects_memory() {
+        for (bytes, operation, destination, source) in [
+            ([0xd8, 0xc3], X87::Add, 0, 3),
+            ([0xdc, 0xc3], X87::Add, 3, 0),
+            ([0xde, 0xc3], X87::AddPop, 3, 0),
+        ] {
+            assert_eq!(
+                lift(&bytes).unwrap(),
+                [
+                    Effect::X87 {
+                        operation,
+                        destination,
+                        source
+                    },
+                    Effect::AdvanceRip(2)
+                ]
+            );
+        }
+        assert!(lift(&[0xd8, 0x00]).is_err());
     }
 }
