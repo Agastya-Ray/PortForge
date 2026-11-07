@@ -4,6 +4,13 @@ fn invalid(message: &str) -> Error {
     Error::new(ErrorKind::InvalidData, message)
 }
 
+fn advance_rva(address: u32, size: usize) -> Result<u32> {
+    u32::try_from(size)
+        .ok()
+        .and_then(|size| address.checked_add(size))
+        .ok_or_else(|| invalid("RVA range overflows"))
+}
+
 #[derive(Clone, Copy)]
 struct Bytes<'a>(&'a [u8]);
 
@@ -168,7 +175,7 @@ impl<'a> Pe<'a> {
         })
     }
 
-    fn rva(&self, address: u32) -> Result<Bytes<'a>> {
+    fn rva_region(&self, address: u32) -> Result<Bytes<'a>> {
         if address < self.headers {
             return self
                 .file
@@ -187,22 +194,42 @@ impl<'a> Pe<'a> {
         Err(invalid("RVA has no file-backed bytes"))
     }
 
-    fn name(&self, address: u32, prefix: usize) -> Result<String> {
-        let bytes = self.rva(address)?;
-        let tail = bytes
-            .0
-            .get(prefix..)
-            .ok_or_else(|| invalid("invalid name RVA"))?;
-        let end = tail
-            .iter()
-            .position(|&byte| byte == 0)
-            .ok_or_else(|| invalid("unterminated PE import name"))?;
-        let name =
-            std::str::from_utf8(&tail[..end]).map_err(|_| invalid("import name is not UTF-8"))?;
+    fn read_rva(&self, mut address: u32, mut output: &mut [u8]) -> Result<()> {
+        while !output.is_empty() {
+            let region = self.rva_region(address)?.0;
+            let count = region.len().min(output.len());
+            output[..count].copy_from_slice(&region[..count]);
+            output = &mut output[count..];
+            if !output.is_empty() {
+                address = advance_rva(address, count)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn name(&self, address: u32, has_hint: bool) -> Result<String> {
+        let mut address = address;
+        if has_hint {
+            self.read_rva(address, &mut [0; 2])?;
+            address = advance_rva(address, 2)?;
+        }
+        let mut name = Vec::new();
+        loop {
+            let tail = self
+                .rva_region(address)
+                .map_err(|_| invalid("unterminated PE import name"))?
+                .0;
+            if let Some(end) = tail.iter().position(|&byte| byte == 0) {
+                name.extend_from_slice(&tail[..end]);
+                break;
+            }
+            name.extend_from_slice(tail);
+            address = advance_rva(address, tail.len())?;
+        }
         if name.is_empty() {
             return Err(invalid("empty import name"));
         }
-        Ok(name.to_owned())
+        String::from_utf8(name).map_err(|_| invalid("import name is not UTF-8"))
     }
 
     pub fn imports(&self) -> Result<Vec<Import>> {
@@ -216,9 +243,14 @@ impl<'a> Pe<'a> {
             if address == 0 || size == 0 {
                 continue;
             }
-            let directory = self.rva(address)?.at(0, size)?;
+            if advance_rva(address, size)? > self.image_size {
+                return Err(invalid("import directory outside image"));
+            }
             let mut terminated = false;
-            for raw in directory.0.chunks_exact(width) {
+            let mut raw = [0; 32];
+            let raw = &mut raw[..width];
+            for index in 0..size / width {
+                self.read_rva(advance_rva(address, index * width)?, raw)?;
                 if raw.iter().all(|&byte| byte == 0) {
                     terminated = true;
                     break;
@@ -252,29 +284,26 @@ impl<'a> Pe<'a> {
                         .ok_or_else(|| invalid("invalid import address"))
                 };
                 table = to_rva(u64::from(table))?;
-                let dll = self.name(to_rva(u64::from(name))?, 0)?.to_ascii_lowercase();
+                let dll = self
+                    .name(to_rva(u64::from(name))?, false)?
+                    .to_ascii_lowercase();
                 let mut symbols = Vec::new();
                 let pointer = self.arch.pointer_size();
                 let mask = 1_u64 << (pointer * 8 - 1);
-                let mut thunk_terminated = false;
-                for thunk in self.rva(table)?.0.chunks_exact(pointer) {
-                    let value = if pointer == 8 {
-                        Bytes(thunk).qword(0)?
-                    } else {
-                        u64::from(Bytes(thunk).dword(0)?)
-                    };
+                loop {
+                    let mut thunk = [0; 8];
+                    self.read_rva(table, &mut thunk[..pointer])
+                        .map_err(|_| invalid("unterminated import thunk table"))?;
+                    let value = u64::from_le_bytes(thunk);
                     if value == 0 {
-                        thunk_terminated = true;
                         break;
                     }
                     symbols.push(if value & mask != 0 {
                         Symbol::Ordinal(value as u16)
                     } else {
-                        Symbol::Name(self.name(to_rva(value)?, 2)?)
+                        Symbol::Name(self.name(to_rva(value)?, true)?)
                     });
-                }
-                if !thunk_terminated {
-                    return Err(invalid("unterminated import thunk table"));
+                    table = advance_rva(table, pointer)?;
                 }
                 imports.push(Import {
                     dll,
@@ -331,18 +360,38 @@ impl Pe<'_> {
         if address == 0 || size == 0 {
             return Err(invalid("image has no base relocations"));
         }
-        let mut blocks = self.rva(address)?.at(0, size)?.0;
-        while !blocks.is_empty() {
-            let header = Bytes(blocks);
+        if advance_rva(address, size)? > self.image_size {
+            return Err(invalid("base relocation directory outside image"));
+        }
+        let mut cursor = 0;
+        while cursor < size {
+            let mut header = [0; 8];
+            if size - cursor < header.len() {
+                return Err(invalid("truncated base relocation header"));
+            }
+            self.read_rva(advance_rva(address, cursor)?, &mut header)?;
+            let header = Bytes(&header);
             let page = header.dword(0)? as usize;
-            let size = header.dword(4)? as usize;
-            if size < 8 || size % 2 != 0 || page % 4096 != 0 {
+            let block_size = header.dword(4)? as usize;
+            if block_size < 8
+                || block_size % 2 != 0
+                || block_size > size - cursor
+                || page % 4096 != 0
+            {
                 return Err(invalid("invalid base relocation block"));
             }
-            let mut entries = header.at(8, size - 8)?.0.chunks_exact(2);
-            blocks = &blocks[size..];
-            while let Some(entry) = entries.next() {
-                let entry = Bytes(entry).word(0)?;
+            let end = cursor + block_size;
+            cursor += 8;
+            let mut next_entry = || -> Result<Option<u16>> {
+                if cursor == end {
+                    return Ok(None);
+                }
+                let mut entry = [0; 2];
+                self.read_rva(advance_rva(address, cursor)?, &mut entry)?;
+                cursor += 2;
+                Ok(Some(u16::from_le_bytes(entry)))
+            };
+            while let Some(entry) = next_entry()? {
                 let kind = entry >> 12;
                 let offset = page + usize::from(entry & 0xfff);
                 let width = match (self.arch, kind) {
@@ -367,10 +416,9 @@ impl Pe<'_> {
                         field.copy_from_slice(&value.to_le_bytes());
                     }
                     4 => {
-                        let next = entries
-                            .next()
-                            .ok_or_else(|| invalid("missing HIGHADJ addend"))?;
-                        let low = i32::from(Bytes(next).word(0)? as i16) as u32;
+                        let next =
+                            next_entry()?.ok_or_else(|| invalid("missing HIGHADJ addend"))?;
+                        let low = i32::from(next as i16) as u32;
                         let value = (u32::from(raw.word(0)?) << 16)
                             .wrapping_add(low)
                             .wrapping_add(delta as u32)
@@ -434,6 +482,77 @@ mod tests {
         data[0x210..0x218].copy_from_slice(&(base + 0x50).to_le_bytes());
         data[0x228..0x22a].copy_from_slice(&relocation.to_le_bytes());
         data
+    }
+
+    fn add_adjacent_section(data: &mut Vec<u8>) {
+        let first = 0x98 + 240;
+        let second = first + 40;
+        data.resize(0x800, 0);
+        data[0x86..0x88].copy_from_slice(&2_u16.to_le_bytes());
+        data[first + 8..first + 12].copy_from_slice(&0x200_u32.to_le_bytes());
+        for (offset, value) in [(8, 0x200_u32), (12, 0x1200), (16, 0x200), (20, 0x600)] {
+            data[second + offset..second + offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    fn write_rva(data: &mut [u8], address: u32, bytes: &[u8]) {
+        for (index, &byte) in bytes.iter().enumerate() {
+            let offset = address as usize + index - 0x1000;
+            let file_offset = if offset < 0x200 {
+                0x200 + offset
+            } else {
+                0x400 + offset
+            };
+            data[file_offset] = byte;
+        }
+    }
+
+    #[test]
+    fn imports_cross_adjacent_rva_regions() {
+        for (descriptor, name, thunk, symbol) in [
+            (0x11f8_u32, 0x1100_u32, 0x1120_u32, 0x1140_u32),
+            (0x1040, 0x11fa, 0x1120, 0x1140),
+            (0x1040, 0x1100, 0x11f8, 0x1140),
+            (0x1040, 0x1100, 0x1120, 0x11fd),
+        ] {
+            let mut data = fixture(Architecture::X64);
+            add_adjacent_section(&mut data);
+            let directory = 0x98 + 112 + 8;
+            data[directory..directory + 4].copy_from_slice(&descriptor.to_le_bytes());
+            data[directory + 4..directory + 8].copy_from_slice(&40_u32.to_le_bytes());
+            write_rva(&mut data, descriptor, &thunk.to_le_bytes());
+            write_rva(&mut data, descriptor + 12, &name.to_le_bytes());
+            write_rva(&mut data, name, b"kernel32.dll\0");
+            write_rva(&mut data, thunk, &u64::from(symbol).to_le_bytes());
+            write_rva(&mut data, thunk + 8, &((1_u64 << 63) | 19).to_le_bytes());
+            write_rva(&mut data, symbol, b"\0\0GetLastError\0");
+            let imports = Pe::parse(&data).unwrap().imports().unwrap();
+            assert_eq!(imports.len(), 1);
+            assert_eq!(imports[0].dll, "kernel32.dll");
+            assert!(
+                matches!(&imports[0].symbols[..], [Symbol::Name(name), Symbol::Ordinal(19)]
+                if name == "GetLastError")
+            );
+        }
+    }
+
+    #[test]
+    fn relocations_cross_adjacent_rva_regions_and_reject_a_gap() {
+        let mut data = fixture(Architecture::X64);
+        add_adjacent_section(&mut data);
+        let directory = 0x98 + 112 + 5 * 8;
+        data[directory..directory + 4].copy_from_slice(&0x11fc_u32.to_le_bytes());
+        let block: [u8; 12] = data[0x220..0x22c].try_into().unwrap();
+        write_rva(&mut data, 0x11fc, &block);
+        let pe = Pe::parse(&data).unwrap();
+        let base = pe.image_base + 0x10000;
+        let rebased = pe.map_image(base, 0x2000).unwrap();
+        assert_eq!(Bytes(&rebased).qword(0x1010).unwrap(), base + 0x50);
+
+        let second = 0x98 + 240 + 40;
+        data[second + 12..second + 16].copy_from_slice(&0x1300_u32.to_le_bytes());
+        let pe = Pe::parse(&data).unwrap();
+        assert!(pe.map_image(base, 0x2000).is_err());
     }
 
     #[test]

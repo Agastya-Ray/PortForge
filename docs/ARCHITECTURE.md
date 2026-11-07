@@ -34,8 +34,8 @@ the evidence and repeated release executable hashes.
 The loader maps headers and section data into a caller-budgeted guest image.
 It fills virtual tails with zeros and applies x86 or x64 base relocations when
 the caller selects a different base. Import binding and execution belong to
-later milestones. Import tables, strings, and relocation directories currently
-need to fit within a single file-backed RVA region.
+later milestones. Import tables, strings, and relocation directories can span
+adjacent file-backed RVA regions. Reads reject gaps in the mapped file.
 
 The CLI corpus verifies 20 generated files. A separate check compares packed and
 unpacked Windows launchers with GNU objdump. It gets sample files from the local
