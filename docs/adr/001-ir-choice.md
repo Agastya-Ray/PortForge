@@ -23,3 +23,21 @@ References:
 
 - [Intel 64 and IA-32 software developer manuals](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 - [Remill lift tool](https://github.com/lifting-bits/remill/blob/master/bin/lift/README.md)
+
+## Arithmetic comparison
+
+Both candidates run the same byte sequences and seed. The Remill candidate
+uses Remill v6.0.1 and the LLVM 19-compatible LLVM-CBE revision pinned in
+`corpus/m1/prepare_remill.sh`. Remill is Apache-2.0 and this LLVM-CBE revision
+uses the University of Illinois/NCSA license. They are build tools for the
+experiment. The project does not vendor them.
+
+The comparison compiles Remill's emitted C in GNU C11 mode with
+`uint128_t` mapped to the host compiler's `__uint128_t`. The experiment
+supplies only the arithmetic marker and trace-boundary functions required
+by these register-only traces. Unexpected control flow aborts.
+
+The ARM64 CI job records generated C size and three execution timings per
+backend. These timings include the test adapter and flag reads. The adapter
+copies between two state layouts for each invocation, so these figures do
+not estimate a production runtime that retains Remill's state across blocks.
