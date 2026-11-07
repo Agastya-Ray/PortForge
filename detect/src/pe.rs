@@ -289,3 +289,174 @@ impl<'a> Pe<'a> {
         Ok(imports)
     }
 }
+
+impl Pe<'_> {
+    /// Materialize the guest image as bytes. The caller supplies its memory budget.
+    pub fn map_image(&self, base: u64, budget: usize) -> Result<Vec<u8>> {
+        let size = self.image_size as usize;
+        let end = base
+            .checked_add(u64::from(self.image_size))
+            .ok_or_else(|| invalid("image range overflows guest address space"))?;
+        if matches!(self.arch, Architecture::X86) && end > (1_u64 << 32) {
+            return Err(invalid("PE32 image does not fit in guest address space"));
+        }
+        if size > budget {
+            return Err(invalid("PE image exceeds the mapping budget"));
+        }
+        let mut image = Vec::new();
+        image.try_reserve_exact(size).map_err(Error::other)?;
+        image.resize(size, 0);
+        image[..self.headers as usize].copy_from_slice(self.file.at(0, self.headers as usize)?.0);
+        for section in &self.sections {
+            if section.raw_size != 0 {
+                let start = section.rva as usize;
+                let length = section.raw_size as usize;
+                image[start..start + length]
+                    .copy_from_slice(self.file.at(section.raw as usize, length)?.0);
+            }
+        }
+        if base != self.image_base {
+            self.relocate(base.wrapping_sub(self.image_base), &mut image)?;
+        }
+        Ok(image)
+    }
+
+    fn relocate(&self, delta: u64, image: &mut [u8]) -> Result<()> {
+        let directory = self
+            .directories
+            .at(5 * 8, 8)
+            .map_err(|_| invalid("image has no base relocation directory"))?;
+        let address = directory.dword(0)?;
+        let size = directory.dword(4)? as usize;
+        if address == 0 || size == 0 {
+            return Err(invalid("image has no base relocations"));
+        }
+        let mut blocks = self.rva(address)?.at(0, size)?.0;
+        while !blocks.is_empty() {
+            let header = Bytes(blocks);
+            let page = header.dword(0)? as usize;
+            let size = header.dword(4)? as usize;
+            if size < 8 || size % 2 != 0 || page % 4096 != 0 {
+                return Err(invalid("invalid base relocation block"));
+            }
+            let mut entries = header.at(8, size - 8)?.0.chunks_exact(2);
+            blocks = &blocks[size..];
+            while let Some(entry) = entries.next() {
+                let entry = Bytes(entry).word(0)?;
+                let kind = entry >> 12;
+                let offset = page + usize::from(entry & 0xfff);
+                let width = match (self.arch, kind) {
+                    (_, 0) => continue,
+                    (Architecture::X86, 1 | 2 | 4) => 2,
+                    (Architecture::X86, 3) => 4,
+                    (Architecture::X64, 10) => 8,
+                    _ => return Err(invalid("unsupported base relocation type")),
+                };
+                let field = image
+                    .get_mut(offset..offset + width)
+                    .ok_or_else(|| invalid("base relocation outside image"))?;
+                let raw = Bytes(field);
+                match kind {
+                    1 | 2 => {
+                        let adjustment = if kind == 1 { delta >> 16 } else { delta };
+                        let value = raw.word(0)?.wrapping_add(adjustment as u16);
+                        field.copy_from_slice(&value.to_le_bytes());
+                    }
+                    3 => {
+                        let value = raw.dword(0)?.wrapping_add(delta as u32);
+                        field.copy_from_slice(&value.to_le_bytes());
+                    }
+                    4 => {
+                        let next = entries
+                            .next()
+                            .ok_or_else(|| invalid("missing HIGHADJ addend"))?;
+                        let low = i32::from(Bytes(next).word(0)? as i16) as u32;
+                        let value = (u32::from(raw.word(0)?) << 16)
+                            .wrapping_add(low)
+                            .wrapping_add(delta as u32)
+                            .wrapping_add(0x8000);
+                        field.copy_from_slice(&((value >> 16) as u16).to_le_bytes());
+                    }
+                    10 => {
+                        let value = raw.qword(0)?.wrapping_add(delta);
+                        field.copy_from_slice(&value.to_le_bytes());
+                    }
+                    _ => unreachable!("relocation type already checked"),
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(arch: Architecture) -> Vec<u8> {
+        let mut data = vec![0; 0x400];
+        let (machine, magic, base, count_offset, optional_size, relocation) = match arch {
+            Architecture::X86 => (0x14c_u16, 0x10b_u16, 0x400000_u64, 92, 224_u16, 0x3010_u16),
+            Architecture::X64 => (0x8664, 0x20b, 0x140000000, 108, 240, 0xa010),
+        };
+        let optional = 0x98;
+        let section = optional + usize::from(optional_size);
+        data[0..2].copy_from_slice(b"MZ");
+        data[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+        data[0x80..0x84].copy_from_slice(b"PE\0\0");
+        data[0x84..0x86].copy_from_slice(&machine.to_le_bytes());
+        data[0x86..0x88].copy_from_slice(&1_u16.to_le_bytes());
+        data[0x94..0x96].copy_from_slice(&optional_size.to_le_bytes());
+        data[optional..optional + 2].copy_from_slice(&magic.to_le_bytes());
+        match arch {
+            Architecture::X86 => {
+                data[optional + 28..optional + 32].copy_from_slice(&(base as u32).to_le_bytes())
+            }
+            Architecture::X64 => {
+                data[optional + 24..optional + 32].copy_from_slice(&base.to_le_bytes())
+            }
+        }
+        for (offset, value) in [
+            (optional + 56, 0x2000_u32),
+            (optional + 60, 0x200),
+            (optional + count_offset, 16),
+            (optional + count_offset + 44, 0x1020),
+            (optional + count_offset + 48, 12),
+            (section + 8, 0x300),
+            (section + 12, 0x1000),
+            (section + 16, 0x200),
+            (section + 20, 0x200),
+            (0x220, 0x1000),
+            (0x224, 12),
+        ] {
+            data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        data[0x210..0x218].copy_from_slice(&(base + 0x50).to_le_bytes());
+        data[0x228..0x22a].copy_from_slice(&relocation.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn maps_and_rebases_both_guest_architectures() {
+        for arch in [Architecture::X86, Architecture::X64] {
+            let data = fixture(arch);
+            let pe = Pe::parse(&data).unwrap();
+            let preferred = pe.map_image(pe.image_base, 0x2000).unwrap();
+            assert_eq!(&preferred[..0x200], &data[..0x200]);
+            assert_eq!(&preferred[0x1000..0x1200], &data[0x200..]);
+            assert!(preferred[0x1200..0x1300].iter().all(|&byte| byte == 0));
+            let base = pe.image_base - 0x10000;
+            let rebased = pe.map_image(base, 0x2000).unwrap();
+            assert_eq!(Bytes(&rebased).qword(0x1010).unwrap(), base + 0x50);
+            assert!(pe.map_image(base, 0x1fff).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_out_of_range_relocation() {
+        let mut data = fixture(Architecture::X64);
+        data[0x220..0x224].copy_from_slice(&0x3000_u32.to_le_bytes());
+        let pe = Pe::parse(&data).unwrap();
+        assert!(pe.map_image(pe.image_base + 0x10000, 0x2000).is_err());
+    }
+}
