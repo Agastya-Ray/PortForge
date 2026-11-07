@@ -3,3 +3,6 @@ name = "pf-ir-spike"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+
+[dependencies]
+pf-decode = { path = "../decode" }

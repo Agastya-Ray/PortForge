@@ -6,8 +6,14 @@ import subprocess
 import tomllib
 
 packages = tomllib.loads(Path("Cargo.lock").read_text())["package"]
-assert {package["name"] for package in packages} == {"pf", "pf-detect", "pf-ir-spike"}
-assert all("source" not in package for package in packages)
+workspace_packages = {"pf", "pf-detect", "pf-decode", "pf-ir-spike"}
+decoder_packages = {"zydis", "bitflags", "cmake", "cc", "find-msvc-tools", "shlex"}
+assert {package["name"] for package in packages if "source" not in package} == workspace_packages
+assert {package["name"] for package in packages if "source" in package} == decoder_packages
+for package in packages:
+    if "source" in package:
+        assert package["source"] == "registry+https://github.com/rust-lang/crates.io-index"
+        assert re.fullmatch(r"[0-9a-f]{64}", package["checksum"])
 paths = subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
 model_suffixes = {".gguf", ".ggml", ".onnx", ".safetensors", ".pt", ".pth", ".tflite"}
 service = re.compile(

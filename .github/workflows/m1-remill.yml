@@ -5,13 +5,19 @@ on:
     paths:
       - ".github/workflows/m1-remill.yml"
       - "corpus/m1/**"
+      - "lift/decode/**"
       - "lift/spike/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
   push:
     branches: [main]
     paths:
       - ".github/workflows/m1-remill.yml"
       - "corpus/m1/**"
+      - "lift/decode/**"
       - "lift/spike/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
 
 permissions:
   contents: read
@@ -32,6 +38,7 @@ jobs:
       - id: compare
         run: |
           rustup override set 1.85.1
+          cargo fetch --locked
           tools="$RUNNER_TEMP/remill-tools"
           export REMILL_LIFT="$tools/remill-build/bin/lift/remill-lift-19"
           export LLVM_CBE="$tools/cbe-build/tools/llvm-cbe/llvm-cbe"
@@ -77,6 +84,7 @@ jobs:
           PF_BENCHMARK: "1"
         run: |
           rustup override set 1.85.1
+          cargo fetch --locked
           tools="$RUNNER_TEMP/remill-tools"
           bash corpus/m1/prepare_remill.sh "$tools" headers
           bash corpus/m1/check_remill.sh "$tools/remill" reference/generated evidence

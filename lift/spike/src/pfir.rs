@@ -1,3 +1,4 @@
+use pf_decode::{DecodedOperandKind, Decoder, Mnemonic, Mode, RegisterClass};
 use std::fmt::Write;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,46 +54,48 @@ pub enum Effect {
 }
 
 pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
+    let decoder = Decoder::new(Mode::X64);
     let mut effects = Vec::new();
     let mut offset = 0;
     let mut next_value = 0;
     while offset < bytes.len() {
-        let instruction = &bytes[offset..];
-        let (rex, opcode_offset) = match instruction[0] {
-            prefix @ 0x40..=0x4f => (prefix, 1),
-            _ => (0, 0),
-        };
-        let [opcode, modrm] = *instruction
-            .get(opcode_offset..opcode_offset + 2)
-            .ok_or_else(|| format!("truncated instruction at offset {offset}"))?
-        else {
-            unreachable!("two-byte slice");
-        };
-        let (operation, writes) = match opcode {
-            0x01 | 0x03 => (Arithmetic::Add, true),
-            0x29 | 0x2b => (Arithmetic::Subtract, true),
-            0x39 | 0x3b => (Arithmetic::Subtract, false),
-            _ => {
+        let instruction = decoder
+            .decode(&bytes[offset..])
+            .map_err(|error| format!("{error} at offset {offset}"))?;
+        let (operation, writes) = match instruction.mnemonic {
+            Mnemonic::ADD => (Arithmetic::Add, true),
+            Mnemonic::SUB => (Arithmetic::Subtract, true),
+            Mnemonic::CMP => (Arithmetic::Subtract, false),
+            mnemonic => {
                 return Err(format!(
-                    "unsupported opcode {opcode:#04x} at offset {offset}"
+                    "decoded {mnemonic} at offset {offset}; no lift available"
                 ))
             }
         };
-        if modrm & 0xc0 != 0xc0 {
-            return Err(format!("unsupported memory operand at offset {offset}"));
-        }
-        let reg = ((modrm >> 3) & 7) | ((rex & 4) << 1);
-        let rm = (modrm & 7) | ((rex & 1) << 3);
-        let (destination, source) = if opcode & 2 == 0 {
-            (rm, reg)
-        } else {
-            (reg, rm)
+        let unsupported = || {
+            format!(
+                "decoded {} at offset {offset}; unsupported operands",
+                instruction.mnemonic
+            )
         };
-        let width = if rex & 8 == 0 { Width::U32 } else { Width::U64 };
+        let [destination, source] = instruction.visible_operands() else {
+            return Err(unsupported());
+        };
+        let (DecodedOperandKind::Reg(destination), DecodedOperandKind::Reg(source)) =
+            (&destination.kind, &source.kind)
+        else {
+            return Err(unsupported());
+        };
+        let width = match (destination.class(), source.class()) {
+            (RegisterClass::GPR32, RegisterClass::GPR32) => Width::U32,
+            (RegisterClass::GPR64, RegisterClass::GPR64) => Width::U64,
+            _ => return Err(unsupported()),
+        };
+        let (destination, source) = (destination.id(), source.id());
         let lhs = Value(next_value);
         let rhs = Value(next_value + 1);
         let result = Value(next_value + 2);
-        let length = (opcode_offset + 2) as u8;
+        let length = instruction.length;
         effects.extend([
             Effect::Read {
                 into: lhs,
@@ -241,9 +244,17 @@ mod tests {
             &[0x01],
             &[0x01, 0x08],
             &[0x90],
-            &[0x48, 0x48, 0x01, 0xc8],
+            &[0xf0, 0x01, 0xc8],
         ] {
             assert!(lift(bytes).is_err(), "{bytes:02x?}");
         }
+    }
+    #[test]
+    fn distinguishes_decode_failure_from_missing_semantics() {
+        assert!(lift(&[0x48, 0x01]).unwrap_err().contains("truncated"));
+        assert!(lift(&[0xd9, 0xe8]).unwrap_err().contains("decoded fld1"));
+        assert!(lift(&[0x01, 0x08])
+            .unwrap_err()
+            .contains("unsupported operands"));
     }
 }

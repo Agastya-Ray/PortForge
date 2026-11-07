@@ -20,6 +20,7 @@ jobs:
       - run: |
           cargo +1.85.1 fmt --all --check
           python3 corpus/check_offline.py
+          cargo +1.85.1 fetch --locked
           cargo +1.85.1 test --workspace --locked --offline
       - name: Rebuild and compare executable hashes
         env:
