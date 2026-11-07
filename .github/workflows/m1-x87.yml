@@ -1,0 +1,66 @@
+name: M1 x87 Arithmetic and State
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/m1-x87.yml"
+      - "corpus/m1/**"
+      - "runtime/guest/**"
+      - "lift/spike/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/m1-x87.yml"
+      - "corpus/m1/**"
+      - "runtime/guest/**"
+      - "lift/spike/**"
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-24.04
+    outputs:
+      digest: ${{ steps.reference.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - id: reference
+        run: |
+          bash corpus/m1/prepare_softfloat.sh "$RUNNER_TEMP/softfloat"
+          bash corpus/m1/check_x87_add.sh "$RUNNER_TEMP/softfloat" evidence
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          with open("evidence/x87-add.json") as report:
+              result = json.load(report)
+          assert result["native_x86_oracle"]
+          print("digest=" + result["digest"])
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: x87-x86-reference
+          path: evidence/
+          if-no-files-found: error
+
+  arm64:
+    needs: reference
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - env:
+          REFERENCE_DIGEST: ${{ needs.reference.outputs.digest }}
+        run: |
+          bash corpus/m1/prepare_softfloat.sh "$RUNNER_TEMP/softfloat"
+          bash corpus/m1/check_x87_add.sh "$RUNNER_TEMP/softfloat" evidence
+          python3 - <<'PY'
+          import json, os
+          with open("evidence/x87-add.json") as report:
+              result = json.load(report)
+          assert not result["native_x86_oracle"]
+          assert result["digest"] == os.environ["REFERENCE_DIGEST"], result
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: x87-arm64
+          path: evidence/
+          if-no-files-found: error
