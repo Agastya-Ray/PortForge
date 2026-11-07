@@ -1,5 +1,9 @@
 #include <stdint.h>
 
+#ifndef PF_X87_H
+#include "../../../runtime/guest/x87.h"
+#endif
+
 #if defined(__aarch64__) && !defined(PF_PORTABLE_ONLY)
 #include <arm_neon.h>
 #endif
@@ -23,6 +27,8 @@ struct pf_pending {
 struct pf_state {
     uint64_t gpr[16];
     struct pf_xmm xmm[16];
+    struct pf_x87_state x87;
+    bool x87_unsupported;
     uint64_t rip, rflags;
     struct pf_pending pending;
 };

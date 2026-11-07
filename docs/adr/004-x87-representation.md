@@ -18,3 +18,17 @@ pinned revision rather than vendored.
 
 [Berkeley SoftFloat interface](https://www.jhauser.us/arithmetic/SoftFloat-3/doc/SoftFloat.html)
 [Intel 64 and IA-32 software developer manuals](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+
+## Initial register stack
+
+Represent the eight physical slots and occupancy separately. Derive TOP
+from the x87 status word and map logical ST(i) through it. This slice covers
+FLD1, FLDZ, FCHS, FABS, and register FADD/FADDP with all exception masks set.
+Masked stack faults write the x87 indefinite value and update TOP and tags
+where the instruction pushes or pops. Leave undefined condition bits alone.
+
+The C emitter stops at an unsupported x87 instruction and reports its RIP
+through the unchanged guest program counter. An unmasked control word,
+pending exception, or unsupported arithmetic operand leaves the x87 state
+unchanged. Deferred trap delivery, x87 instruction/data pointer metadata,
+and full environment instructions remain separate work.
