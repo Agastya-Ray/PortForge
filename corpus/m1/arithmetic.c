@@ -2,8 +2,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
+#ifdef PF_USE_REMILL
+#include "remill_backend.h"
+#define PF_BACKEND "remill"
+#else
 #include "lifted.c"
+#define PF_BACKEND "pfir"
+#endif
 
 typedef void (*block_fn)(struct pf_state *);
 
@@ -114,8 +121,10 @@ static uint64_t verify_case(const struct arithmetic_case *test, unsigned samples
             test->blocks[encoding](&state);
 
             require(state.rip == rip + bytes, test->name, encoding, iteration, a, b, "RIP differs");
+#ifndef PF_USE_REMILL
             require(state.rflags == rflags && state.pending.operation != PF_NO_FLAGS,
                     test->name, encoding, iteration, a, b, "flags were not left pending");
+#endif
             uint64_t flags = pf_read_flags(&state);
             require((flags & ~PF_ARITHMETIC_FLAGS) == (rflags & ~PF_ARITHMETIC_FLAGS),
                     test->name, encoding, iteration, a, b, "unrelated flags changed");
@@ -163,16 +172,51 @@ static uint64_t verify_block(unsigned samples, uint64_t digest) {
     return digest;
 }
 
-int main(void) {
+static int benchmark(void) {
+    const unsigned samples = 1000000;
+    uint64_t seed = UINT64_C(0x48273123b591df15);
+    uint64_t digest = UINT64_C(14695981039346656037);
+    clock_t start = clock();
+    for (unsigned index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        struct pf_state state = {0};
+        block_fn run = cases[index].blocks[0];
+        for (unsigned iteration = 0; iteration < samples; ++iteration) {
+            state.gpr[0] = random_u64(&seed);
+            state.gpr[1] = random_u64(&seed);
+            run(&state);
+            digest = mix(mix(digest, state.gpr[0]), pf_read_flags(&state));
+        }
+    }
+    clock_t stop = clock();
+    if (start == (clock_t)-1 || stop == (clock_t)-1 || stop <= start) {
+        fputs("unable to measure benchmark CPU time\n", stderr);
+        return 1;
+    }
+    unsigned blocks = samples * (sizeof(cases) / sizeof(cases[0]));
+    double ns = (double)(stop - start) * 1e9 / CLOCKS_PER_SEC / blocks;
+    printf("{\"backend\":\"%s\",\"blocks\":%u,\"cpu_ns_per_block\":%.3f,"
+           "\"digest\":\"%016" PRIx64 "\"}\n", PF_BACKEND, blocks, ns, digest);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--benchmark") == 0) {
+        return benchmark();
+    }
+    if (argc != 1) {
+        fputs("unexpected argument\n", stderr);
+        return 2;
+    }
+
     const unsigned samples = 1000000;
     uint64_t digest = UINT64_C(14695981039346656037);
     for (unsigned index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
         digest = verify_case(&cases[index], samples, digest);
     }
     digest = verify_block(samples, digest);
-    printf("{\"native_x86_oracle\":%s,\"samples_per_instruction_width\":%u,"
+    printf("{\"backend\":\"%s\",\"native_x86_oracle\":%s,\"samples_per_instruction_width\":%u,"
            "\"instruction_width_pairs\":6,\"encodings_per_pair\":3,"
            "\"three_instruction_samples\":%u,\"mismatches\":0,"
-           "\"digest\":\"%016" PRIx64 "\"}\n", NATIVE_X86, samples, samples, digest);
+           "\"digest\":\"%016" PRIx64 "\"}\n", PF_BACKEND, NATIVE_X86, samples, samples, digest);
     return 0;
 }

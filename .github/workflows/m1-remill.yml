@@ -1,0 +1,105 @@
+name: M1 Remill Arithmetic Comparison
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/m1-remill.yml"
+      - "corpus/m1/**"
+      - "lift/spike/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/m1-remill.yml"
+      - "corpus/m1/**"
+      - "lift/spike/**"
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    outputs:
+      digest: ${{ steps.compare.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-19 llvm-19-dev ninja-build bison flex
+          rustup toolchain install 1.85.1 --profile minimal
+      - run: bash corpus/m1/prepare_remill.sh "$RUNNER_TEMP/remill-tools"
+      - id: compare
+        run: |
+          rustup override set 1.85.1
+          tools="$RUNNER_TEMP/remill-tools"
+          export REMILL_LIFT="$tools/remill-build/bin/lift/remill-lift-19"
+          export LLVM_CBE="$tools/cbe-build/tools/llvm-cbe/llvm-cbe"
+          bash corpus/m1/emit_remill.sh evidence/generated
+          bash corpus/m1/emit_remill.sh "$RUNNER_TEMP/repeated"
+          diff -r evidence/generated "$RUNNER_TEMP/repeated"
+          cp "$tools/remill/LICENSE" evidence/generated/Remill-LICENSE.txt
+          cp "$tools/llvm-cbe/LICENSE" evidence/generated/LLVM-CBE-LICENSE.txt
+          bash corpus/m1/check_remill.sh "$tools/remill" evidence/generated evidence
+          bash corpus/m1/check_arithmetic.sh evidence
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+
+          pfir = json.loads(Path("evidence/arithmetic.json").read_text())
+          remill = json.loads(Path("evidence/remill-arithmetic.json").read_text())
+          assert pfir["native_x86_oracle"] and remill["native_x86_oracle"]
+          assert pfir["digest"] == remill["digest"]
+          print("digest=" + pfir["digest"])
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: remill-x86-reference
+          path: evidence/
+          if-no-files-found: error
+
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    needs: reference
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: remill-x86-reference
+          path: reference/
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-19
+          rustup toolchain install 1.85.1 --profile minimal
+      - env:
+          REFERENCE_DIGEST: ${{ needs.reference.outputs.digest }}
+          PF_BENCHMARK: "1"
+        run: |
+          rustup override set 1.85.1
+          tools="$RUNNER_TEMP/remill-tools"
+          bash corpus/m1/prepare_remill.sh "$tools" headers
+          bash corpus/m1/check_remill.sh "$tools/remill" reference/generated evidence
+          bash corpus/m1/check_arithmetic.sh evidence
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          pfir = json.loads(Path("evidence/arithmetic.json").read_text())
+          remill = json.loads(Path("evidence/remill-arithmetic.json").read_text())
+          assert not pfir["native_x86_oracle"] and not remill["native_x86_oracle"]
+          assert pfir["digest"] == remill["digest"] == os.environ["REFERENCE_DIGEST"]
+          benchmark_digests = set()
+          for name in ("pfir", "remill"):
+              lines = Path(f"evidence/{name}-benchmark.jsonl").read_text().splitlines()
+              benchmark = [json.loads(line) for line in lines]
+              assert len(benchmark) == 3
+              benchmark_digests.update(sample["digest"] for sample in benchmark)
+          assert len(benchmark_digests) == 1
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: remill-arm64-comparison
+          path: evidence/
+          if-no-files-found: error
