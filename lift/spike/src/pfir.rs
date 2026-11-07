@@ -23,6 +23,32 @@ pub enum Arithmetic {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Packed {
+    Xor,
+    AddDwords,
+    AddQwords,
+    SubDwords,
+    SubQwords,
+}
+
+impl Packed {
+    fn c_operation(self) -> &'static str {
+        match self {
+            Self::Xor => "PF_PXOR",
+            Self::AddDwords => "PF_PADDD",
+            Self::AddQwords => "PF_PADDQ",
+            Self::SubDwords => "PF_PSUBD",
+            Self::SubQwords => "PF_PSUBQ",
+        }
+    }
+}
+
+enum Operation {
+    Scalar(Arithmetic, bool),
+    Packed(Packed),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Value(usize);
 
 #[derive(Debug, PartialEq, Eq)]
@@ -50,6 +76,20 @@ pub enum Effect {
         rhs: Value,
         result: Value,
     },
+    ReadXmm {
+        into: Value,
+        register: u8,
+    },
+    PackedBinary {
+        into: Value,
+        operation: Packed,
+        lhs: Value,
+        rhs: Value,
+    },
+    WriteXmm {
+        register: u8,
+        from: Value,
+    },
     AdvanceRip(u8),
 }
 
@@ -62,10 +102,15 @@ pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
         let instruction = decoder
             .decode(&bytes[offset..])
             .map_err(|error| format!("{error} at offset {offset}"))?;
-        let (operation, writes) = match instruction.mnemonic {
-            Mnemonic::ADD => (Arithmetic::Add, true),
-            Mnemonic::SUB => (Arithmetic::Subtract, true),
-            Mnemonic::CMP => (Arithmetic::Subtract, false),
+        let operation = match instruction.mnemonic {
+            Mnemonic::ADD => Operation::Scalar(Arithmetic::Add, true),
+            Mnemonic::SUB => Operation::Scalar(Arithmetic::Subtract, true),
+            Mnemonic::CMP => Operation::Scalar(Arithmetic::Subtract, false),
+            Mnemonic::PXOR => Operation::Packed(Packed::Xor),
+            Mnemonic::PADDD => Operation::Packed(Packed::AddDwords),
+            Mnemonic::PADDQ => Operation::Packed(Packed::AddQwords),
+            Mnemonic::PSUBD => Operation::Packed(Packed::SubDwords),
+            Mnemonic::PSUBQ => Operation::Packed(Packed::SubQwords),
             mnemonic => {
                 return Err(format!(
                     "decoded {mnemonic} at offset {offset}; no lift available"
@@ -86,47 +131,77 @@ pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
         else {
             return Err(unsupported());
         };
-        let width = match (destination.class(), source.class()) {
-            (RegisterClass::GPR32, RegisterClass::GPR32) => Width::U32,
-            (RegisterClass::GPR64, RegisterClass::GPR64) => Width::U64,
-            _ => return Err(unsupported()),
-        };
+        let classes = (destination.class(), source.class());
         let (destination, source) = (destination.id(), source.id());
         let lhs = Value(next_value);
         let rhs = Value(next_value + 1);
         let result = Value(next_value + 2);
         let length = instruction.length;
-        effects.extend([
-            Effect::Read {
-                into: lhs,
-                register: destination,
-                width,
-            },
-            Effect::Read {
-                into: rhs,
-                register: source,
-                width,
-            },
-            Effect::Binary {
-                into: result,
-                operation,
-                width,
-                lhs,
-                rhs,
-            },
-            Effect::PendingFlags {
-                operation,
-                width,
-                lhs,
-                rhs,
-                result,
-            },
-        ]);
-        if writes {
-            effects.push(Effect::Write {
-                register: destination,
-                from: result,
-            });
+        match operation {
+            Operation::Scalar(operation, writes) => {
+                let width = match classes {
+                    (RegisterClass::GPR32, RegisterClass::GPR32) => Width::U32,
+                    (RegisterClass::GPR64, RegisterClass::GPR64) => Width::U64,
+                    _ => return Err(unsupported()),
+                };
+                effects.extend([
+                    Effect::Read {
+                        into: lhs,
+                        register: destination,
+                        width,
+                    },
+                    Effect::Read {
+                        into: rhs,
+                        register: source,
+                        width,
+                    },
+                    Effect::Binary {
+                        into: result,
+                        operation,
+                        width,
+                        lhs,
+                        rhs,
+                    },
+                    Effect::PendingFlags {
+                        operation,
+                        width,
+                        lhs,
+                        rhs,
+                        result,
+                    },
+                ]);
+                if writes {
+                    effects.push(Effect::Write {
+                        register: destination,
+                        from: result,
+                    });
+                }
+            }
+            Operation::Packed(operation) => {
+                if classes != (RegisterClass::XMM, RegisterClass::XMM) {
+                    return Err(unsupported());
+                }
+                effects.extend([
+                    Effect::ReadXmm {
+                        into: lhs,
+                        register: destination,
+                    },
+                    Effect::ReadXmm {
+                        into: rhs,
+                        register: source,
+                    },
+                    Effect::PackedBinary {
+                        into: result,
+                        operation,
+                        lhs,
+                        rhs,
+                    },
+                    Effect::WriteXmm {
+                        register: destination,
+                        from: result,
+                    },
+                ]);
+            }
         }
         effects.push(Effect::AdvanceRip(length));
         next_value += 3;
@@ -189,6 +264,31 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 };
                 let width = width.bits();
                 writeln!(source, "    state->pending = (struct pf_pending){{v{lhs}, v{rhs}, v{id}, {width}, {mode}}};").unwrap();
+            }
+            Effect::ReadXmm {
+                into: Value(id),
+                register,
+            } => {
+                writeln!(source, "    struct pf_xmm v{id} = state->xmm[{register}];").unwrap();
+            }
+            Effect::PackedBinary {
+                into: Value(id),
+                operation,
+                lhs: Value(lhs),
+                rhs: Value(rhs),
+            } => {
+                let operation = operation.c_operation();
+                writeln!(
+                    source,
+                    "    struct pf_xmm v{id} = pf_packed({operation}, v{lhs}, v{rhs});"
+                )
+                .unwrap();
+            }
+            Effect::WriteXmm {
+                register,
+                from: Value(id),
+            } => {
+                writeln!(source, "    state->xmm[{register}] = v{id};").unwrap();
             }
             Effect::AdvanceRip(bytes) => {
                 writeln!(source, "    state->rip += {bytes};").unwrap();
@@ -323,5 +423,15 @@ mod tests {
         assert!(lift(&[0x01, 0x08])
             .unwrap_err()
             .contains("unsupported operands"));
+    }
+    #[test]
+    fn packed_lifts_reject_mmx_memory_and_vex_forms() {
+        for encoding in [
+            &[0x0f, 0xef, 0xc1][..],   // PXOR MM0, MM1
+            &[0x66, 0x0f, 0xef, 0x01], // PXOR XMM0, [RCX]
+            &[0xc5, 0xf9, 0xef, 0xc1], // VPXOR XMM0, XMM0, XMM1
+        ] {
+            assert!(lift(encoding).is_err(), "{encoding:02x?}");
+        }
     }
 }

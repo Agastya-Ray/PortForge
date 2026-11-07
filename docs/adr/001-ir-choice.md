@@ -40,3 +40,20 @@ The ARM64 CI job records generated C size and three execution timings per
 backend. These timings include the test adapter and flag reads. The adapter
 copies between two state layouts for each invocation, so these figures do
 not estimate a production runtime that retains Remill's state across blocks.
+
+## SSE2 register comparison
+
+Start with legacy XMM PXOR, PADDD, PADDQ, PSUBD, and PSUBQ. Both candidates
+receive the same instruction bytes and initial XMM state. Compare the
+destination, the rest of the represented state, and the next RIP with an
+x86 hardware reference. PFIR keeps XMM values as two unsigned 64-bit words.
+It emits NEON on ARM64 and unsigned C operations on other hosts. Dword
+arithmetic wraps separately in each 32-bit lane.
+
+This slice covers register operands. Memory accesses, MMX, AVX, and
+floating-point SSE2 have separate semantics and are outside these tests.
+
+The x87 comparison remains separate. The Remill to LLVM-CBE experiment
+lowered x87 arithmetic to host `long double`, which does not preserve the
+guest 80-bit representation on ARM64. The x87 experiment must test explicit
+80-bit storage and operations against native x86 before comparing performance.

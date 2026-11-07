@@ -6,7 +6,11 @@ output=${1:?usage: emit_remill.sh <output-directory>}
 : "${LLVM_CBE:?set LLVM_CBE to the LLVM C backend executable}"
 : "${LLVM_LINK:=llvm-link-19}"
 
-source corpus/m1/blocks.sh
+case "${2:-arithmetic}" in
+    arithmetic) source corpus/m1/blocks.sh ;;
+    sse2) source corpus/m1/sse2_blocks.sh ;;
+    *) echo "unsupported comparison suite: $2" >&2; exit 2 ;;
+esac
 mkdir -p "$output"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

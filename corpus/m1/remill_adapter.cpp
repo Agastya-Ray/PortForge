@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <remill/Arch/X86/Runtime/State.h>
 
 #define PF_TRACE(index, symbol) extern "C" void *symbol(State *, uint64_t, void *);
@@ -39,7 +40,7 @@ extern "C" void *__remill_missing_block(State *state, uint64_t address, void *me
 #define PF_FLAG_BITS(X) X(0, cf) X(2, pf) X(4, af) X(6, zf) X(7, sf) X(10, df) X(11, of)
 
 extern "C" void pf_remill_execute(unsigned index, uint64_t registers[16],
-                                  uint64_t *rip, uint64_t *flags) {
+                                  uint64_t *rip, uint64_t *flags, void *xmm) {
     State state{};
 #define PF_LOAD(index, name) state.gpr.name.qword = registers[index];
     PF_GPRS(PF_LOAD)
@@ -49,6 +50,13 @@ extern "C" void pf_remill_execute(unsigned index, uint64_t registers[16],
 #define PF_LOAD_FLAG(bit, name) state.aflag.name = (*flags >> bit) & 1;
     PF_FLAG_BITS(PF_LOAD_FLAG)
 #undef PF_LOAD_FLAG
+
+    auto *vectors = static_cast<unsigned char *>(xmm);
+    if (vectors) {
+        for (unsigned i = 0; i < 16; ++i) {
+            std::memcpy(&state.vec[i].xmm, vectors + 16 * i, 16);
+        }
+    }
 
     reached_boundary = false;
     if (index >= sizeof(traces) / sizeof(traces[0])
@@ -60,6 +68,11 @@ extern "C" void pf_remill_execute(unsigned index, uint64_t registers[16],
 #define PF_STORE(index, name) registers[index] = state.gpr.name.qword;
     PF_GPRS(PF_STORE)
 #undef PF_STORE
+    if (vectors) {
+        for (unsigned i = 0; i < 16; ++i) {
+            std::memcpy(vectors + 16 * i, &state.vec[i].xmm, 16);
+        }
+    }
     *rip = state.gpr.rip.qword;
     constexpr uint64_t separated_flags = UINT64_C(0xcd5);
     *flags = state.rflag.flat & ~separated_flags;
