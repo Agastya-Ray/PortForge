@@ -1,5 +1,5 @@
 [workspace]
-members = ["cli", "detect"]
+members = ["cli", "detect", "lift/spike"]
 resolver = "2"
 
 [workspace.package]

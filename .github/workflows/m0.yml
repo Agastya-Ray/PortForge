@@ -27,8 +27,8 @@ jobs:
         run: |
           for run in first second; do
             cargo +1.85.1 clean
-            cargo +1.85.1 build --release --locked --offline
-            sha256sum target/release/pf > "$RUNNER_TEMP/pf-$run.sha256"
+            cargo +1.85.1 build --workspace --release --locked --offline
+            sha256sum target/release/pf target/release/pf-ir-spike > "$RUNNER_TEMP/pf-$run.sha256"
           done
           diff "$RUNNER_TEMP/pf-first.sha256" "$RUNNER_TEMP/pf-second.sha256"
           python3 corpus/check_detect.py target/release/pf evidence
