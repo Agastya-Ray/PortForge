@@ -6,7 +6,7 @@ import subprocess
 import tomllib
 
 packages = tomllib.loads(Path("Cargo.lock").read_text())["package"]
-assert {package["name"] for package in packages} == {"pf", "pf-detect"}
+assert {package["name"] for package in packages} == {"pf", "pf-detect", "pf-ir-spike"}
 assert all("source" not in package for package in packages)
 paths = subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
 model_suffixes = {".gguf", ".ggml", ".onnx", ".safetensors", ".pt", ".pth", ".tflite"}

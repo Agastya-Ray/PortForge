@@ -12,3 +12,7 @@ dependencies = [
 [[package]]
 name = "pf-detect"
 version = "0.1.0"
+
+[[package]]
+name = "pf-ir-spike"
+version = "0.1.0"
