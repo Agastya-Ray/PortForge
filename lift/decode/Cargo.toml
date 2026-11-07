@@ -1,0 +1,9 @@
+[package]
+name = "pf-decode"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pf-detect = { path = "../../detect" }
+zydis = { version = "=4.1.1", default-features = false, features = ["std", "full-decoder"] }

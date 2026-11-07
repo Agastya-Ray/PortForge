@@ -20,6 +20,7 @@ jobs:
       - run: |
           cargo +1.85.1 fmt --all --check
           python3 corpus/check_offline.py
+          cargo +1.85.1 fetch --locked
           cargo +1.85.1 test --workspace --locked --offline
       - name: Rebuild and compare executable hashes
         env:
@@ -43,6 +44,9 @@ jobs:
           "$RUNNER_TEMP/corpus-venv/bin/python" -m pip download --require-hashes --only-binary=:all: --no-deps \
             --dest "$RUNNER_TEMP/fixtures" -r corpus/fixtures.requirements.txt
           python3 corpus/check_packed.py target/release/pf upx-ucl evidence/real "$RUNNER_TEMP"/fixtures/*.whl
+          set -o pipefail
+          rustup override set 1.85.1
+          python3 corpus/check_pe_decoder.py "$RUNNER_TEMP"/fixtures/*.whl 2>&1 | tee evidence/pe-decoder.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: m0-${{ matrix.os }}

@@ -10,9 +10,8 @@ outputs match. Measure both candidates with the same C compiler and flags.
 
 The in-house experiment begins with register-direct ADD, SUB and CMP in x86-64
 mode. It represents each register read and arithmetic result as a distinct SSA
-value, leaves flags pending until observed, and emits C11. Its small decoder is
-limited to the experiment's encodings. The production decoder and lifter remain
-subject to the decision.
+value, leaves flags pending until observed, and emits C11. The spike uses the Zydis decoder described in
+[ADR 003](003-x86-decoder.md). The production lifter remains subject to this decision.
 
 The Remill experiment must lift the same byte sequences to LLVM IR and emit C
 with equivalent state transitions. Record any operations the C backend cannot
