@@ -10,6 +10,7 @@ permissions:
 jobs:
   detect:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
@@ -39,7 +40,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y upx-ucl python3-venv binutils-mingw-w64-x86-64
           python3 -m venv "$RUNNER_TEMP/corpus-venv"
-          "$RUNNER_TEMP/corpus-venv/bin/python" corpus/check_packed.py target/release/pf upx-ucl evidence/real
+          "$RUNNER_TEMP/corpus-venv/bin/python" -m pip download --require-hashes --only-binary=:all: --no-deps \
+            --dest "$RUNNER_TEMP/fixtures" -r corpus/fixtures.requirements.txt
+          python3 corpus/check_packed.py target/release/pf upx-ucl evidence/real "$RUNNER_TEMP"/fixtures/*.whl
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: m0-${{ matrix.os }}

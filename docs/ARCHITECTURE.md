@@ -38,6 +38,6 @@ later milestones. Import tables, strings, and relocation directories can span
 adjacent file-backed RVA regions. Reads reject gaps in the mapped file.
 
 The CLI corpus verifies 20 generated files. A separate check compares packed and
-unpacked Windows launchers with GNU objdump. It gets sample files from the local
-pip installation and packs disposable copies. PortForge itself has no packer
+unpacked Windows launchers with GNU objdump. It extracts sample files from a
+hash-pinned distlib wheel and packs disposable copies. PortForge itself has no packer
 dependency.
