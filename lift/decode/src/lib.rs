@@ -1,3 +1,7 @@
+mod pe;
+
+pub use pe::{PeDecodeError, PeDecoder};
+
 use std::fmt;
 use zydis::{AllOperands, MachineMode, StackWidth, Status};
 

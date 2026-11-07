@@ -238,6 +238,73 @@ mod tests {
     }
 
     #[test]
+    fn every_register_pair_maps_to_the_expected_guest_state_slots() {
+        for (opcodes, operation, writes) in [
+            ([0x01, 0x03], Arithmetic::Add, true),
+            ([0x29, 0x2b], Arithmetic::Subtract, true),
+            ([0x39, 0x3b], Arithmetic::Subtract, false),
+        ] {
+            for (width, rex_width) in [(Width::U32, 0), (Width::U64, 8)] {
+                for destination in 0_u8..16 {
+                    for source in 0_u8..16 {
+                        for (direction, opcode) in opcodes.into_iter().enumerate() {
+                            let (reg, rm) = if direction == 0 {
+                                (source, destination)
+                            } else {
+                                (destination, source)
+                            };
+                            let rex = 0x40 | rex_width | ((reg >> 3) << 2) | (rm >> 3);
+                            let bytes = [rex, opcode, 0xc0 | ((reg & 7) << 3) | (rm & 7)];
+                            let encoding = if rex == 0x40 { &bytes[1..] } else { &bytes[..] };
+                            let effects = lift(encoding).unwrap();
+                            assert_eq!(
+                                effects[0],
+                                Effect::Read {
+                                    into: Value(0),
+                                    register: destination,
+                                    width
+                                }
+                            );
+                            assert_eq!(
+                                effects[1],
+                                Effect::Read {
+                                    into: Value(1),
+                                    register: source,
+                                    width
+                                }
+                            );
+                            assert_eq!(
+                                effects[2],
+                                Effect::Binary {
+                                    into: Value(2),
+                                    operation,
+                                    width,
+                                    lhs: Value(0),
+                                    rhs: Value(1)
+                                }
+                            );
+                            if writes {
+                                assert_eq!(
+                                    effects[4],
+                                    Effect::Write {
+                                        register: destination,
+                                        from: Value(2)
+                                    }
+                                );
+                            }
+                            assert_eq!(effects.len(), if writes { 6 } else { 5 });
+                            assert_eq!(
+                                effects.last(),
+                                Some(&Effect::AdvanceRip(encoding.len() as u8))
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn rejects_truncated_and_unsupported_encodings() {
         for bytes in [
             &[0x48][..],

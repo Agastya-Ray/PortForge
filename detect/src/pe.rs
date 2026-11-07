@@ -1,5 +1,7 @@
 use std::io::{Error, ErrorKind, Result};
 
+const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
+
 fn invalid(message: &str) -> Error {
     Error::new(ErrorKind::InvalidData, message)
 }
@@ -83,6 +85,7 @@ struct Section {
     virtual_size: u32,
     raw: u32,
     raw_size: u32,
+    characteristics: u32,
 }
 
 pub struct Pe<'a> {
@@ -138,6 +141,7 @@ impl<'a> Pe<'a> {
                 rva: table.dword(offset + 12)?,
                 raw_size: table.dword(offset + 16)?,
                 raw: table.dword(offset + 20)?,
+                characteristics: table.dword(offset + 36)?,
             };
             if section.raw_size != 0 {
                 file.at(section.raw as usize, section.raw_size as usize)?;
@@ -173,6 +177,40 @@ impl<'a> Pe<'a> {
             image_size,
             headers,
         })
+    }
+
+    /// Read a bounded prefix of executable, file-backed bytes starting at an RVA.
+    /// Stop at the first gap, non-executable section or virtual-only byte.
+    pub fn read_executable(&self, mut rva: u32, output: &mut [u8]) -> usize {
+        let mut copied = 0;
+        while copied < output.len() {
+            let region = self.sections.iter().find_map(|section| {
+                if section.characteristics & IMAGE_SCN_MEM_EXECUTE == 0 {
+                    return None;
+                }
+                let offset = rva.checked_sub(section.rva)?;
+                let file_size = if section.virtual_size == 0 {
+                    section.raw_size
+                } else {
+                    section.raw_size.min(section.virtual_size)
+                };
+                if offset >= file_size {
+                    return None;
+                }
+                let start = section.raw as usize + offset as usize;
+                let end = start + (file_size - offset) as usize;
+                Some(&self.file.0[start..end])
+            });
+            let Some(region) = region else {
+                break;
+            };
+            let count = region.len().min(output.len() - copied);
+            output[copied..copied + count].copy_from_slice(&region[..count]);
+            copied += count;
+            // Section validation bounds this increment by SizeOfImage.
+            rva += count as u32;
+        }
+        copied
     }
 
     fn rva_region(&self, address: u32) -> Result<Bytes<'a>> {
@@ -505,6 +543,49 @@ mod tests {
             };
             data[file_offset] = byte;
         }
+    }
+
+    #[test]
+    fn executable_reads_follow_adjacent_regions_and_stop_at_data() {
+        let mut data = fixture(Architecture::X64);
+        add_adjacent_section(&mut data);
+        let first = 0x98 + 240;
+        let second = first + 40;
+        data[first + 36..first + 40].copy_from_slice(&IMAGE_SCN_MEM_EXECUTE.to_le_bytes());
+        write_rva(&mut data, 0x11ff, &[0x48, 0x01, 0xc8]);
+        let mut window = [0; 3];
+
+        let pe = Pe::parse(&data).unwrap();
+        assert_eq!(pe.read_executable(0x11ff, &mut window), 1);
+        assert_eq!(pe.read_executable(0x1200, &mut window), 0);
+        assert_eq!(pe.read_executable(0, &mut window), 0);
+
+        data[second + 36..second + 40].copy_from_slice(&IMAGE_SCN_MEM_EXECUTE.to_le_bytes());
+        let pe = Pe::parse(&data).unwrap();
+        assert_eq!(pe.read_executable(0x11ff, &mut window), 3);
+        assert_eq!(window, [0x48, 0x01, 0xc8]);
+        assert_eq!(pe.read_executable(0x1400, &mut window), 0);
+    }
+
+    #[test]
+    fn executable_reads_skip_file_padding_and_virtual_tails() {
+        let mut data = fixture(Architecture::X64);
+        let section = 0x98 + 240;
+        data[section + 36..section + 40].copy_from_slice(&IMAGE_SCN_MEM_EXECUTE.to_le_bytes());
+        let mut window = [0; 4];
+
+        let pe = Pe::parse(&data).unwrap();
+        assert_eq!(pe.read_executable(0x11ff, &mut window), 1);
+        assert_eq!(pe.read_executable(0x1200, &mut window), 0);
+
+        data[section + 8..section + 12].copy_from_slice(&0x100_u32.to_le_bytes());
+        let pe = Pe::parse(&data).unwrap();
+        assert_eq!(pe.read_executable(0x10ff, &mut window), 1);
+        assert_eq!(pe.read_executable(0x1100, &mut window), 0);
+
+        data[section + 8..section + 12].fill(0);
+        let pe = Pe::parse(&data).unwrap();
+        assert_eq!(pe.read_executable(0x11ff, &mut window), 1);
     }
 
     #[test]
