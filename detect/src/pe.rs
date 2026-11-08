@@ -77,6 +77,7 @@ pub struct Import {
     pub dll: String,
     pub symbols: Vec<Symbol>,
     pub delayed: bool,
+    pub eager_iat_rva: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -294,12 +295,13 @@ impl<'a> Pe<'a> {
                     break;
                 }
                 let row = Bytes(raw);
-                let (name, mut table, use_va) = if delayed {
+                let (name, mut table, iat, use_va) = if delayed {
                     let lookup = row.dword(16)?;
                     let iat = row.dword(12)?;
                     (
                         row.dword(4)?,
                         if lookup == 0 { iat } else { lookup },
+                        iat,
                         row.dword(0)? & 1 == 0,
                     )
                 } else {
@@ -308,6 +310,7 @@ impl<'a> Pe<'a> {
                     (
                         row.dword(12)?,
                         if lookup == 0 { iat } else { lookup },
+                        iat,
                         false,
                     )
                 };
@@ -347,6 +350,7 @@ impl<'a> Pe<'a> {
                     dll,
                     symbols,
                     delayed,
+                    eager_iat_rva: (!delayed && iat != 0).then_some(iat),
                 });
             }
             if !terminated {
@@ -354,6 +358,37 @@ impl<'a> Pe<'a> {
             }
         }
         Ok(imports)
+    }
+
+    /// Validate the file-backed eager IAT before binding it for execution.
+    pub fn eager_iat(&self, import: &Import) -> Result<Option<u32>> {
+        let Some(first) = import.eager_iat_rva else {
+            return Ok(None);
+        };
+        let width = self.arch.pointer_size();
+        let size = import
+            .symbols
+            .len()
+            .checked_add(1)
+            .and_then(|count| count.checked_mul(width))
+            .ok_or_else(|| invalid("IAT size overflows"))?;
+        let end = advance_rva(first, size)?;
+        if first < self.headers || end > self.image_size {
+            return Err(invalid("IAT range is outside image sections"));
+        }
+        let mut cursor = first;
+        while cursor < end {
+            let region = self
+                .rva_region(cursor)
+                .map_err(|_| invalid("IAT range is not file-backed"))?;
+            cursor += region.0.len().min((end - cursor) as usize) as u32;
+        }
+        let mut terminator = [0; 8];
+        self.read_rva(end - width as u32, &mut terminator[..width])?;
+        if terminator != [0; 8] {
+            return Err(invalid("IAT is missing its terminator"));
+        }
+        Ok(Some(first))
     }
 }
 
@@ -603,17 +638,28 @@ mod tests {
             data[directory + 4..directory + 8].copy_from_slice(&40_u32.to_le_bytes());
             write_rva(&mut data, descriptor, &thunk.to_le_bytes());
             write_rva(&mut data, descriptor + 12, &name.to_le_bytes());
+            write_rva(&mut data, descriptor + 16, &0x1170_u32.to_le_bytes());
             write_rva(&mut data, name, b"kernel32.dll\0");
             write_rva(&mut data, thunk, &u64::from(symbol).to_le_bytes());
             write_rva(&mut data, thunk + 8, &((1_u64 << 63) | 19).to_le_bytes());
             write_rva(&mut data, symbol, b"\0\0GetLastError\0");
-            let imports = Pe::parse(&data).unwrap().imports().unwrap();
+            let pe = Pe::parse(&data).unwrap();
+            let mut imports = pe.imports().unwrap();
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].dll, "kernel32.dll");
+            assert_eq!(imports[0].eager_iat_rva, Some(0x1170));
             assert!(
                 matches!(&imports[0].symbols[..], [Symbol::Name(name), Symbol::Ordinal(19)]
                 if name == "GetLastError")
             );
+            assert_eq!(pe.eager_iat(&imports[0]).unwrap(), Some(0x1170));
+            imports[0].eager_iat_rva = Some(0x800);
+            assert!(pe.eager_iat(&imports[0]).is_err());
+            imports[0].eager_iat_rva = Some(pe.image_size - 8);
+            assert!(pe.eager_iat(&imports[0]).is_err());
+            imports[0].eager_iat_rva = Some(0x1170);
+            write_rva(&mut data, 0x1180, &[1]);
+            assert!(Pe::parse(&data).unwrap().eager_iat(&imports[0]).is_err());
         }
     }
 

@@ -6,6 +6,9 @@ on:
       - ".github/workflows/m1-pe-entry.yml"
       - "corpus/m1/*pe-entry*"
       - "corpus/m1/check_pe_entry.sh"
+      - "corpus/m1/*pe-import*"
+      - "corpus/m1/check_pe_import.sh"
+      - "corpus/m1/pe_import_fixture.py"
       - "detect/**"
       - "lift/**"
       - "runtime/guest/**"
@@ -26,6 +29,7 @@ jobs:
           rustup override set 1.85.1
           cargo fetch --locked
           bash corpus/m1/check_pe_entry.sh evidence
+          bash corpus/m1/check_pe_import.sh evidence/import
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pe-entry-x86-reference
@@ -46,6 +50,7 @@ jobs:
           rustup override set 1.85.1
           cargo fetch --locked
           bash corpus/m1/check_pe_entry.sh evidence reference
+          bash corpus/m1/check_pe_import.sh evidence/import reference/import
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pe-entry-arm64
