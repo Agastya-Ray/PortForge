@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-evidence=${1:?usage: check_pe_entry.sh <evidence> [reference-evidence]}
+evidence=${1:?usage: check_pe_entry.sh <evidence> [reference-evidence] [scalar]}
+options=()
+case ${3:-entry} in
+    entry) ;;
+    scalar) options=(-DPF_SCALAR_FIXTURE) ;;
+    *) exit 2 ;;
+esac
 mkdir -p "$evidence"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -9,7 +15,12 @@ cargo build --release --locked --offline -p pf-ir-spike
 lift=target/release/pf-ir-spike
 args=()
 if [[ $(uname -m) == x86_64 ]]; then
-    as --64 corpus/m1/pe-entry.s -o "$tmp/entry.o"
+    if [[ ${3:-entry} == scalar ]]; then
+        cc -O2 -fno-ident -fcf-protection=none -fno-asynchronous-unwind-tables \
+            -fno-stack-protector -c corpus/m1/pe-scalar-source.c -o "$tmp/entry.o"
+    else
+        as --64 corpus/m1/pe-entry.s -o "$tmp/entry.o"
+    fi
     for pe in "$evidence/entry.exe" "$tmp/repeated.exe"; do
         ld -mi386pep --entry pf_fixture --subsystem console --image-base 0x140000000 \
             --no-insert-timestamp "$tmp/entry.o" -o "$pe"
@@ -26,7 +37,7 @@ fi
 "$lift" --pe "$evidence/entry.exe" > "$tmp/repeated.c"
 cmp "$evidence/lifted.c" "$tmp/repeated.c"
 for executable in "$tmp/check" "$tmp/repeated"; do
-    "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror -I"$evidence" corpus/m1/pe-entry.c -o "$executable"
+    "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror "${options[@]}" -I"$evidence" corpus/m1/pe-entry.c -o "$executable"
 done
 cmp "$tmp/check" "$tmp/repeated"
 "$tmp/check" "${args[@]}" | tee "$evidence/digest.txt"

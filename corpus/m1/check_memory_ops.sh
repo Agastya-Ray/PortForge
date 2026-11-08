@@ -5,6 +5,9 @@ suite=${1:?usage: check_memory_ops.sh <suite> [softfloat-directory]}
 extra=()
 case "$suite" in
     lea|sse2-memory|xmm-moves) ;;
+    scalar)
+        if [[ $(uname -m) == x86_64 ]]; then extra=(-mno-red-zone); fi
+        ;;
     x87-memory)
         work=${2:?missing SoftFloat directory}
         extra=(-I"$work/source/source/include" runtime/guest/{x87,x87_stack}.c "$work/build/softfloat.a")

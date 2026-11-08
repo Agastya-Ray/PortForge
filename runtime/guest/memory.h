@@ -52,6 +52,10 @@ static inline uint64_t pf_read_le64(const uint8_t *bytes) {
     return pf_read_le32(bytes) | ((uint64_t)pf_read_le32(bytes + 4) << 32);
 }
 
+static inline void pf_write_le32(uint8_t *bytes, uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i) bytes[i] = (uint8_t)(value >> (8 * i));
+}
+
 static inline void pf_write_le64(uint8_t *bytes, uint64_t value) {
     for (unsigned i = 0; i < 8; ++i) bytes[i] = (uint8_t)(value >> (8 * i));
 }
