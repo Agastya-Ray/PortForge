@@ -2,7 +2,7 @@
 set -euo pipefail
 
 suite=${1:?usage: check_memory_ops.sh <suite>}
-case "$suite" in lea|sse2-memory) ;; *) exit 2 ;; esac
+case "$suite" in lea|sse2-memory|xmm-moves) ;; *) exit 2 ;; esac
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 cargo build --release --locked --offline -p pf-ir-spike
