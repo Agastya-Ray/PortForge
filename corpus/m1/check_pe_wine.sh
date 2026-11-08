@@ -39,8 +39,13 @@ export WINEPREFIX="$tmp/prefix" WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=
 "$winegcc" "${target[@]}" -std=gnu11 -O2 -Wall -Wextra -Werror -I"$PWD" -I"$evidence" \
     corpus/m1/pe-wine.c -o "$tmp/check.exe"
 "$loader" --version | tee "$evidence/wine-version.txt"
-timeout 120 "$loader" "$executable" | tee "$evidence/digest.txt"
-[[ $(cat "$evidence/digest.txt") =~ ^[0-9a-f]{16}$ ]]
+# The Windows C runtime writes CRLF while the ELF harness writes LF.
+timeout 120 "$loader" "$executable" | sed 's/\r$//' | tee "$evidence/digest.txt"
+digest=$(cat "$evidence/digest.txt")
+if [[ ! "$digest" =~ ^[0-9a-f]{16}$ ]]; then
+    printf 'Unexpected Wine digest output: %q\n' "$digest" >&2
+    exit 1
+fi
 if [[ $(uname -m) != x86_64 ]]; then
     cmp "$evidence/lifted.c" "$reference/lifted.c"
     cmp "$evidence/digest.txt" "$reference/digest.txt"
