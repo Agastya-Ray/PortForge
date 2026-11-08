@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include "lifted.c"
+#include "memory-evidence.h"
 
 static uint64_t next(uint64_t *seed) {
     *seed ^= *seed << 13;
@@ -10,7 +11,15 @@ static uint64_t next(uint64_t *seed) {
 }
 
 int main(void) {
+#if defined(__x86_64__)
+    uint64_t relative, next_rip;
+    __asm__("leaq -16(%%rip), %0; 1: leaq 1b(%%rip), %1" : "=r"(relative), "=r"(next_rip));
+    assert(relative == next_rip - 16);
+    __asm__("leaq -16(%%eip), %0; 1: leaq 1b(%%rip), %1" : "=r"(relative), "=r"(next_rip));
+    assert(relative == (uint32_t)(next_rip - 16));
+#endif
     uint64_t seed = UINT64_C(0xb018c145d92fa603);
+    uint64_t digest = PF_MEMORY_DIGEST_SEED;
     for (unsigned i = 0; i < 1000000; ++i) {
         uint64_t base = next(&seed), index = next(&seed), rip = next(&seed);
         struct pf_state state = {.rip = rip, .rflags = 0x8d5};
@@ -28,19 +37,24 @@ int main(void) {
 #endif
         pf_block_0(&state);
         assert(state.gpr[0] == full && state.rip == rip + 5);
+        digest = pf_memory_digest(digest, state.gpr[0]);
         state.rip = rip;
         pf_block_1(&state);
         assert(state.gpr[0] == (uint32_t)full && state.rip == rip + 6);
+        digest = pf_memory_digest(digest, state.gpr[0]);
         state.rip = rip;
         pf_block_2(&state);
         assert(state.gpr[0] == (uint32_t)full && state.rip == rip + 4);
+        digest = pf_memory_digest(digest, state.gpr[0]);
         state.rip = rip;
         pf_block_3(&state);
         assert(state.gpr[0] == rip + 7 - 16 && state.rip == rip + 7);
+        digest = pf_memory_digest(digest, state.gpr[0]);
         state.rip = rip;
         pf_block_4(&state);
         assert(state.gpr[0] == (uint32_t)(rip + 8 - 16) && state.rip == rip + 8);
+        digest = pf_memory_digest(digest, state.gpr[0]);
         assert(state.rflags == 0x8d5 && state.gpr[3] == base && state.gpr[1] == index);
     }
-    puts("LEA address and destination widths passed 1,000,000 inputs");
+    pf_memory_print_digest(digest);
 }

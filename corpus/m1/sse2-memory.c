@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "lifted.c"
+#include "memory-evidence.h"
 
 #if defined(__x86_64__)
 #include <emmintrin.h>
@@ -32,9 +33,9 @@ int main(void) {
     void (*const blocks[])(struct pf_state *) = {
         pf_block_0, pf_block_1, pf_block_2, pf_block_3, pf_block_4,
     };
-    const enum pf_packed_op operations[] = {PF_PXOR, PF_PADDD, PF_PADDQ, PF_PSUBD, PF_PSUBQ};
     _Alignas(16) uint8_t data[32] = {0};
     uint64_t seed = UINT64_C(0xc029a31fa85b2603);
+    uint64_t digest = PF_MEMORY_DIGEST_SEED;
     for (unsigned op = 0; op < 5; ++op) {
         for (unsigned i = 0; i < 1000000; ++i) {
             struct pf_xmm a = {{next(&seed), next(&seed)}}, b = {{next(&seed), next(&seed)}};
@@ -44,13 +45,13 @@ int main(void) {
             state.gpr[0] = 0x1010;
             state.xmm[0] = a;
             blocks[op](&state);
-            struct pf_xmm expected = pf_packed(operations[op], a, b);
 #if defined(__x86_64__)
             struct pf_xmm native = reference(op, a, data + 16);
-            assert(memcmp(&expected, &native, 16) == 0);
+            assert(memcmp(&state.xmm[0], &native, 16) == 0);
 #endif
-            assert(memcmp(&state.xmm[0], &expected, 16) == 0);
             assert(state.rip == 4 && state.memory_fault == PF_MEM_OK && state.rflags == 0x8d5);
+            digest = pf_memory_digest(digest, state.xmm[0].qword[0]);
+            digest = pf_memory_digest(digest, state.xmm[0].qword[1]);
         }
     }
     const uint64_t addresses[] = {0x1001, 0x1020, UINT64_C(0x0000800000000000)};
@@ -63,5 +64,5 @@ int main(void) {
         assert(state.rip == 0x5000 && state.xmm[0].qword[0] == 7);
         assert(state.memory_fault == faults[i] && state.fault_address == addresses[i]);
     }
-    puts("five SSE2 memory operations passed 1,000,000 inputs each");
+    pf_memory_print_digest(digest);
 }

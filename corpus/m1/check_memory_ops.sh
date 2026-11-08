@@ -18,4 +18,10 @@ source "corpus/m1/$suite-blocks.sh"
 target/release/pf-ir-spike "${blocks[@]}" > "$tmp/lifted.c"
 "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror -I"$tmp" \
     "corpus/m1/$suite.c" "${extra[@]}" -o "$tmp/check"
-"$tmp/check"
+"$tmp/check" > "$tmp/digest"
+digest=$(cat "$tmp/digest")
+if [[ ! "$digest" =~ ^[0-9a-f]{16}$ ]] || ! printf '%s\n' "$digest" | cmp -s - "$tmp/digest"; then
+    printf 'Unexpected %s digest output: %q\n' "$suite" "$digest" >&2
+    exit 1
+fi
+cat "$tmp/digest"
