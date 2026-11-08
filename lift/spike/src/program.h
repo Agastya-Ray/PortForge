@@ -17,10 +17,18 @@ struct pf_pe_import {
 
 typedef uint64_t (*pf_pe_host_fn)(uint64_t, uint64_t, uint64_t, uint64_t);
 
+struct pf_pe_guest_arg {
+    size_t size;
+    bool writable;
+};
+
 struct pf_pe_binding {
     uint64_t target;
     pf_pe_host_fn invoke;
+    struct pf_pe_guest_arg args[4];
 };
+
+_Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "import arguments must hold host pointers");
 
 static inline void pf_pe_call(struct pf_state *state, uint64_t target, uint64_t return_rip) {
     uint64_t rsp = state->gpr[4] - 8;
@@ -54,10 +62,21 @@ static inline bool pf_pe_import_call(struct pf_state *state, uint64_t slot,
     uint64_t target = pf_read_le64(bytes);
     if (!pf_pe_check_target(state, target)) return false;
     if (!target || !binding || !binding->invoke || binding->target != target) return false;
+    uint64_t args[] = {state->gpr[1], state->gpr[2], state->gpr[8], state->gpr[9]};
+    for (size_t i = 0; i < 4; ++i) {
+        struct pf_pe_guest_arg arg = binding->args[i];
+        if (!arg.size) continue;
+        if (!args[i]) {
+            state->memory_fault = PF_MEM_UNMAPPED;
+            state->fault_address = 0;
+            return false;
+        }
+        if (!pf_guest_span(state, args[i], arg.size, 1, arg.writable, &bytes)) return false;
+        args[i] = (uintptr_t)bytes;
+    }
     pf_pe_call(state, target, return_rip);
     if (state->memory_fault != PF_MEM_OK) return false;
-    state->gpr[0] = binding->invoke(state->gpr[1], state->gpr[2], state->gpr[8], state->gpr[9]);
-    state->gpr[4] += 8;
-    state->rip = return_rip;
-    return true;
+    state->gpr[0] = binding->invoke(args[0], args[1], args[2], args[3]);
+    pf_pe_return(state);
+    return state->memory_fault == PF_MEM_OK;
 }
