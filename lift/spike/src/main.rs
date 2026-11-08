@@ -7,6 +7,8 @@ use std::{env, process::ExitCode};
 fn compile(arguments: impl Iterator<Item = String>) -> Result<String, String> {
     let mut source = include_str!("../../../runtime/guest/x87.h").to_owned();
     source.push('\n');
+    source.push_str(include_str!("../../../runtime/guest/memory.h"));
+    source.push('\n');
     source.push_str(include_str!("guest.h"));
     let mut count = 0;
     for hex in arguments {

@@ -120,6 +120,11 @@ pub enum Effect {
         destination: u8,
         source: u8,
     },
+    LoadXmm {
+        into: Value,
+        address: Address,
+        alignment: u8,
+    },
     EffectiveAddress {
         into: Value,
         address: Address,
@@ -229,6 +234,47 @@ pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
         let [destination, source] = instruction.visible_operands() else {
             return Err(unsupported());
         };
+        if let (
+            Operation::Packed(operation),
+            DecodedOperandKind::Reg(destination),
+            DecodedOperandKind::Mem(memory),
+        ) = (&operation, &destination.kind, &source.kind)
+        {
+            if destination.class() != RegisterClass::XMM || source.size != 128 {
+                return Err(unsupported());
+            }
+            let length = instruction.length;
+            let address = Address::for_access(memory, instruction.address_width, length)
+                .ok_or_else(unsupported)?;
+            let lhs = Value(next_value);
+            let rhs = Value(next_value + 1);
+            let result = Value(next_value + 2);
+            effects.extend([
+                Effect::ReadXmm {
+                    into: lhs,
+                    register: destination.id(),
+                },
+                Effect::LoadXmm {
+                    into: rhs,
+                    address,
+                    alignment: 16,
+                },
+                Effect::PackedBinary {
+                    into: result,
+                    operation: *operation,
+                    lhs,
+                    rhs,
+                },
+                Effect::WriteXmm {
+                    register: destination.id(),
+                    from: result,
+                },
+                Effect::AdvanceRip(length),
+            ]);
+            next_value += 3;
+            offset += usize::from(length);
+            continue;
+        }
         let (DecodedOperandKind::Reg(destination), DecodedOperandKind::Reg(source)) =
             (&destination.kind, &source.kind)
         else {
@@ -405,6 +451,19 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 writeln!(source, "        return;").unwrap();
                 writeln!(source, "    }}").unwrap();
             }
+            Effect::LoadXmm {
+                into: Value(id),
+                ref address,
+                alignment,
+            } => {
+                let expression = address.c_expression();
+                writeln!(source, "    struct pf_xmm v{id};").unwrap();
+                writeln!(
+                    source,
+                    "    if (!pf_load_xmm(state, {expression}, {alignment}, &v{id})) return;"
+                )
+                .unwrap();
+            }
             Effect::EffectiveAddress {
                 into: Value(id),
                 ref address,
@@ -553,11 +612,11 @@ mod tests {
             .contains("unsupported operands"));
     }
     #[test]
-    fn packed_lifts_reject_mmx_memory_and_vex_forms() {
+    fn packed_lifts_reject_mmx_segmented_memory_and_vex_forms() {
         for encoding in [
-            &[0x0f, 0xef, 0xc1][..],   // PXOR MM0, MM1
-            &[0x66, 0x0f, 0xef, 0x01], // PXOR XMM0, [RCX]
-            &[0xc5, 0xf9, 0xef, 0xc1], // VPXOR XMM0, XMM0, XMM1
+            &[0x0f, 0xef, 0xc1][..],         // PXOR MM0, MM1
+            &[0x64, 0x66, 0x0f, 0xef, 0x01], // PXOR XMM0, FS:[RCX]
+            &[0xc5, 0xf9, 0xef, 0xc1],       // VPXOR XMM0, XMM0, XMM1
         ] {
             assert!(lift(encoding).is_err(), "{encoding:02x?}");
         }
