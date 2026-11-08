@@ -1,5 +1,5 @@
 use crate::address::Address;
-use pf_decode::{DecodedOperandKind, Decoder, Mnemonic, Mode, RegisterClass};
+use pf_decode::{DecodedOperandKind, Decoder, Instruction, Mnemonic, Mode, RegisterClass};
 use std::fmt::Write;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,13 +144,31 @@ pub enum Effect {
 
 pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
     let decoder = Decoder::new(Mode::X64);
+    let mut offset = 0;
+    lift_decoded(std::iter::from_fn(|| {
+        let remaining = bytes.get(offset..).filter(|bytes| !bytes.is_empty())?;
+        let result = decoder
+            .decode(remaining)
+            .map_err(|error| format!("{error} at offset {offset}"));
+        offset += result
+            .as_ref()
+            .map_or(remaining.len(), |i| usize::from(i.length));
+        Some(result)
+    }))
+}
+
+pub fn lift_instruction(instruction: Instruction) -> Result<Vec<Effect>, String> {
+    lift_decoded([Ok(instruction)])
+}
+
+fn lift_decoded(
+    instructions: impl IntoIterator<Item = Result<Instruction, String>>,
+) -> Result<Vec<Effect>, String> {
     let mut effects = Vec::new();
     let mut offset = 0;
     let mut next_value = 0;
-    while offset < bytes.len() {
-        let instruction = decoder
-            .decode(&bytes[offset..])
-            .map_err(|error| format!("{error} at offset {offset}"))?;
+    for instruction in instructions {
+        let instruction = instruction?;
         if instruction.mnemonic == Mnemonic::FLD {
             let error = || format!("unsupported FLD operand at offset {offset}");
             let [source] = instruction.visible_operands() else {

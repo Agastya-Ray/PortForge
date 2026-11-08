@@ -22,6 +22,7 @@ To run the lifter experiment after fetching the locked sources:
 
 ```sh
 bash corpus/m1/check_arithmetic.sh ./evidence
+bash corpus/m1/check_pe_entry.sh ./evidence/pe-entry  # x86-64 Linux
 ```
 
 See [Architecture](docs/ARCHITECTURE.md) for the file interface and milestone status.
