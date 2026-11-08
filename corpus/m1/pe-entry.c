@@ -89,6 +89,7 @@ int main(int argc, char **argv) {
     (void)argv;
     assert(argc == 1);
 #endif
+    assert(pf_pe_bind_imports(NULL, NULL, 0, 0, NULL, 0).status == PF_PE_BIND_OK);
     check_stops();
     uint64_t seed = UINT64_C(0xd1486232cc719ac5);
     uint64_t digest = UINT64_C(14695981039346656037);

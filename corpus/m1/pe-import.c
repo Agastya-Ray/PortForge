@@ -12,6 +12,7 @@
 #define REGION_SIZE 0x10000
 #define STACK_END (IMAGE_BASE + REGION_SIZE)
 #define STOP_RIP UINT64_C(0x70001000)
+#define FIRST_IMPORT UINT64_C(0x70000000)
 
 static unsigned host_calls;
 
@@ -25,9 +26,9 @@ static uint64_t by_ordinal(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
     return ((a - c) ^ d) + b * 5;
 }
 
-static const struct pf_pe_binding bindings[] = {
-    {.target = UINT64_C(0x70000000), .invoke = by_name},
-    {.target = UINT64_C(0x70000008), .invoke = by_ordinal},
+static const struct pf_pe_export scalar_exports[] = {
+    {.dll = "FIXTURE.DLL", .ordinal = 17, .invoke = by_ordinal},
+    {.dll = "Fixture.dll", .name = "MixFour", .invoke = by_name},
 };
 
 static uint64_t pointers_by_name(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
@@ -47,13 +48,13 @@ static uint64_t pointers_by_ordinal(uint64_t a, uint64_t b, uint64_t c, uint64_t
     return result;
 }
 
-static const struct pf_pe_binding pointer_bindings[] = {
+static const struct pf_pe_export pointer_exports[] = {
     {
-        .target = UINT64_C(0x70000000), .invoke = pointers_by_name,
+        .dll = "fixture.dll", .name = "MixFour", .invoke = pointers_by_name,
         .args = {{8, true}, {8, false}, {0}, {8, true}},
     },
     {
-        .target = UINT64_C(0x70000008), .invoke = pointers_by_ordinal,
+        .dll = "fixture.dll", .ordinal = 17, .invoke = pointers_by_ordinal,
         .args = {{8, true}, {8, false}, {0}, {8, true}},
     },
 };
@@ -62,6 +63,70 @@ static size_t slot_offset(unsigned index) {
     assert(index < pf_pe_import_count);
     assert(pf_pe_imports[index].slot >= IMAGE_BASE && pf_pe_imports[index].slot < STACK_END - 8);
     return pf_pe_imports[index].slot - IMAGE_BASE;
+}
+
+static void bind_fixture(uint8_t *memory, const struct pf_pe_export *exports,
+                         struct pf_pe_binding *bindings) {
+    struct pf_state state = {.memory = {memory, IMAGE_BASE, REGION_SIZE, true}};
+    struct pf_pe_bind_result result = pf_pe_bind_imports(&state, exports, 2, FIRST_IMPORT, bindings, 2);
+    assert(result.status == PF_PE_BIND_OK && result.import_index == SIZE_MAX);
+    for (size_t i = 0; i < 2; ++i) {
+        assert(bindings[i].target == FIRST_IMPORT + i * 8);
+        assert(pf_read_le64(memory + slot_offset(i)) == bindings[i].target);
+    }
+}
+
+static void check_bind_failure(struct pf_state state, const struct pf_pe_export *exports,
+                               size_t count, uint64_t target, size_t capacity,
+                               struct pf_pe_bind_result expected) {
+    struct pf_pe_binding output[2] = {
+        {.target = 1, .invoke = by_name}, {.target = 2, .invoke = by_ordinal},
+    };
+    unsigned char saved[sizeof(output)];
+    memcpy(saved, output, sizeof(saved));
+    uint64_t previous[] = {
+        pf_read_le64(state.memory.bytes + slot_offset(0)),
+        pf_read_le64(state.memory.bytes + slot_offset(1)),
+    };
+    state.memory_fault = PF_MEM_ALIGNMENT;
+    state.fault_address = 23;
+    struct pf_pe_bind_result result = pf_pe_bind_imports(&state, exports, count, target, output, capacity);
+    assert(result.status == expected.status && result.import_index == expected.import_index);
+    assert(result.memory_fault == expected.memory_fault);
+    assert(state.memory_fault == PF_MEM_ALIGNMENT && state.fault_address == 23);
+    assert(memcmp(saved, output, sizeof(saved)) == 0);
+    for (size_t i = 0; i < 2; ++i) {
+        assert(pf_read_le64(state.memory.bytes + slot_offset(i)) == previous[i]);
+    }
+}
+
+static void check_binder(uint8_t *memory) {
+    struct pf_state state = {.memory = {memory, IMAGE_BASE, REGION_SIZE, true}};
+    for (size_t i = 0; i < 2; ++i) pf_write_le64(memory + slot_offset(i), 0x1234 + i);
+    check_bind_failure(state, scalar_exports + 1, 1, FIRST_IMPORT, 2,
+                       (struct pf_pe_bind_result){PF_PE_BIND_UNRESOLVED, 1, PF_MEM_OK});
+    struct pf_pe_export duplicate[] = {scalar_exports[0], scalar_exports[1], scalar_exports[0]};
+    check_bind_failure(state, duplicate, 3, FIRST_IMPORT, 2,
+                       (struct pf_pe_bind_result){PF_PE_BIND_AMBIGUOUS, 1, PF_MEM_OK});
+    duplicate[1].name = "mixfour";
+    check_bind_failure(state, duplicate, 2, FIRST_IMPORT, 2,
+                       (struct pf_pe_bind_result){PF_PE_BIND_UNRESOLVED, 0, PF_MEM_OK});
+    check_bind_failure(state, scalar_exports, 2, FIRST_IMPORT, 1,
+                       (struct pf_pe_bind_result){PF_PE_BIND_INVALID, SIZE_MAX, PF_MEM_OK});
+    const uint64_t invalid_bases[] = {
+        0, FIRST_IMPORT + 1, IMAGE_BASE - 8, UINT64_MAX - 7, UINT64_C(0x00007ffffffffff8),
+    };
+    for (size_t i = 0; i < sizeof(invalid_bases) / sizeof(invalid_bases[0]); ++i) {
+        check_bind_failure(state, scalar_exports, 2, invalid_bases[i], 2,
+                           (struct pf_pe_bind_result){PF_PE_BIND_TARGET_RANGE, SIZE_MAX, PF_MEM_OK});
+    }
+    state.memory.writable = false;
+    check_bind_failure(state, scalar_exports, 2, FIRST_IMPORT, 2,
+                       (struct pf_pe_bind_result){PF_PE_BIND_MEMORY_FAULT, 0, PF_MEM_READ_ONLY});
+    state.memory.writable = true;
+    state.memory.size = slot_offset(1) + 7;
+    check_bind_failure(state, scalar_exports, 2, FIRST_IMPORT, 2,
+                       (struct pf_pe_bind_result){PF_PE_BIND_MEMORY_FAULT, 1, PF_MEM_UNMAPPED});
 }
 
 static struct pf_state caller(uint8_t *memory, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
@@ -74,7 +139,7 @@ static struct pf_state caller(uint8_t *memory, uint64_t a, uint64_t b, uint64_t 
     };
 }
 
-static void check_stops(uint8_t *memory) {
+static void check_stops(uint8_t *memory, const struct pf_pe_binding *bindings) {
     struct pf_state state = caller(memory, 1, 2, 3, 4);
     assert(pf_pe_run_bound(&state, STOP_RIP, 3, bindings, 2) == PF_PE_BUDGET);
     struct pf_state at_call = state;
@@ -144,7 +209,7 @@ static win_fn load_fixture(const char *path, win_fn named, win_fn ordinal) {
 }
 #endif
 
-static void check_pointer_stops(uint8_t *memory) {
+static void check_pointer_stops(uint8_t *memory, const struct pf_pe_binding *pointer_bindings) {
     const uint64_t a = IMAGE_BASE + 0x301, b = IMAGE_BASE + 0x311, d = IMAGE_BASE + 0x321;
     const uint64_t faults[] = {0, STACK_END - 7, UINT64_C(0x0000800000000000), d};
     const enum pf_memory_fault codes[] = {
@@ -200,7 +265,9 @@ static uint64_t check_pointers(uint8_t *memory, const char *path) {
     const uint64_t start = IMAGE_BASE + 0x301;
     uint64_t seed = UINT64_C(0x61afe192d1486232);
     uint64_t digest = UINT64_C(14695981039346656037);
-    check_pointer_stops(memory);
+    struct pf_pe_binding pointer_bindings[2];
+    bind_fixture(memory, pointer_exports, pointer_bindings);
+    check_pointer_stops(memory, pointer_bindings);
     for (unsigned i = 0; i < 1000000; ++i) {
         unsigned b = i % 2 ? 0 : 8;
         unsigned d = i % 4 ? 16 : 4;
@@ -243,8 +310,10 @@ int main(int argc, char **argv) {
     assert(argc == 1);
 #endif
     uint8_t memory[REGION_SIZE] = {0};
-    for (unsigned i = 0; i < 2; ++i) pf_write_le64(memory + slot_offset(i), bindings[i].target);
-    check_stops(memory);
+    struct pf_pe_binding bindings[2];
+    check_binder(memory);
+    bind_fixture(memory, scalar_exports, bindings);
+    check_stops(memory, bindings);
     uint64_t seed = UINT64_C(0xd1486232cc719ac5);
     uint64_t digest = UINT64_C(14695981039346656037);
     for (unsigned i = 0; i < 1000000; ++i) {
