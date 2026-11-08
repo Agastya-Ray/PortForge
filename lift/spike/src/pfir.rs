@@ -1,3 +1,4 @@
+use crate::address::Address;
 use pf_decode::{DecodedOperandKind, Decoder, Mnemonic, Mode, RegisterClass};
 use std::fmt::Write;
 
@@ -119,6 +120,11 @@ pub enum Effect {
         destination: u8,
         source: u8,
     },
+    EffectiveAddress {
+        into: Value,
+        address: Address,
+        width: Width,
+    },
     AdvanceRip(u8),
 }
 
@@ -131,6 +137,41 @@ pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
         let instruction = decoder
             .decode(&bytes[offset..])
             .map_err(|error| format!("{error} at offset {offset}"))?;
+        if instruction.mnemonic == Mnemonic::LEA {
+            let error = || format!("unsupported LEA operands at offset {offset}");
+            let [destination, memory] = instruction.visible_operands() else {
+                return Err(error());
+            };
+            let (DecodedOperandKind::Reg(destination), DecodedOperandKind::Mem(memory)) =
+                (&destination.kind, &memory.kind)
+            else {
+                return Err(error());
+            };
+            let width = match destination.class() {
+                RegisterClass::GPR32 => Width::U32,
+                RegisterClass::GPR64 => Width::U64,
+                _ => return Err(error()),
+            };
+            let length = instruction.length;
+            let address =
+                Address::new(memory, instruction.address_width, length).ok_or_else(error)?;
+            let into = Value(next_value);
+            effects.extend([
+                Effect::EffectiveAddress {
+                    into,
+                    address,
+                    width,
+                },
+                Effect::Write {
+                    register: destination.id(),
+                    from: into,
+                },
+                Effect::AdvanceRip(length),
+            ]);
+            next_value += 1;
+            offset += usize::from(length);
+            continue;
+        }
         let operation = match instruction.mnemonic {
             Mnemonic::ADD => Operation::Scalar(Arithmetic::Add, true),
             Mnemonic::SUB => Operation::Scalar(Arithmetic::Subtract, true),
@@ -363,6 +404,19 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 writeln!(source, "        state->x87_unsupported = true;").unwrap();
                 writeln!(source, "        return;").unwrap();
                 writeln!(source, "    }}").unwrap();
+            }
+            Effect::EffectiveAddress {
+                into: Value(id),
+                ref address,
+                width,
+            } => {
+                let expression = address.c_expression();
+                let width = width.bits();
+                writeln!(
+                    source,
+                    "    uint{width}_t v{id} = (uint{width}_t){expression};"
+                )
+                .unwrap();
             }
             Effect::AdvanceRip(bytes) => {
                 writeln!(source, "    state->rip += {bytes};").unwrap();
