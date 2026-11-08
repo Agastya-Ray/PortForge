@@ -40,9 +40,16 @@ struct pf_x87_state {
 
 enum pf_x87_op { PF_FLD1, PF_FLDZ, PF_FCHS, PF_FABS, PF_FADD, PF_FADDP };
 
+static inline bool pf_x87_available(const struct pf_x87_state *state) {
+    return (state->control & 0x3f) == 0x3f && !(state->status & PF_X87_ERROR_SUMMARY);
+}
+
 /* Execute the supported register operation with all exception masks set.
  * False leaves the x87 state unchanged. */
 bool pf_x87_execute(struct pf_x87_state *state, enum pf_x87_op op,
                     unsigned destination, unsigned source);
+
+/* Push a finite IEEE binary32 or binary64 encoding. False leaves state unchanged. */
+bool pf_x87_load_real(struct pf_x87_state *state, uint64_t bits, unsigned width);
 
 #endif

@@ -130,6 +130,10 @@ pub enum Effect {
         address: Address,
         alignment: u8,
     },
+    LoadX87Real {
+        address: Address,
+        width: Width,
+    },
     EffectiveAddress {
         into: Value,
         address: Address,
@@ -147,6 +151,29 @@ pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
         let instruction = decoder
             .decode(&bytes[offset..])
             .map_err(|error| format!("{error} at offset {offset}"))?;
+        if instruction.mnemonic == Mnemonic::FLD {
+            let error = || format!("unsupported FLD operand at offset {offset}");
+            let [source] = instruction.visible_operands() else {
+                return Err(error());
+            };
+            let DecodedOperandKind::Mem(memory) = &source.kind else {
+                return Err(error());
+            };
+            let width = match source.size {
+                32 => Width::U32,
+                64 => Width::U64,
+                _ => return Err(error()),
+            };
+            let length = instruction.length;
+            let address =
+                Address::for_access(memory, instruction.address_width, length).ok_or_else(error)?;
+            effects.extend([
+                Effect::LoadX87Real { address, width },
+                Effect::AdvanceRip(length),
+            ]);
+            offset += usize::from(length);
+            continue;
+        }
         if matches!(instruction.mnemonic, Mnemonic::MOVDQA | Mnemonic::MOVDQU) {
             let alignment = if instruction.mnemonic == Mnemonic::MOVDQA {
                 16
@@ -542,6 +569,15 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 )
                 .unwrap();
             }
+            Effect::LoadX87Real { ref address, width } => {
+                let expression = address.c_expression();
+                let width = width.bits();
+                writeln!(
+                    source,
+                    "    if (!pf_load_x87_real(state, {expression}, {width})) return;"
+                )
+                .unwrap();
+            }
             Effect::AdvanceRip(bytes) => {
                 writeln!(source, "    state->rip += {bytes};").unwrap();
             }
@@ -706,5 +742,20 @@ mod tests {
             );
         }
         assert!(lift(&[0xd8, 0x00]).is_err());
+    }
+
+    #[test]
+    fn x87_memory_lifts_only_flat_binary32_and_binary64() {
+        for (bytes, width) in [([0xd9, 0x00], Width::U32), ([0xdd, 0x00], Width::U64)] {
+            let effects = lift(&bytes).unwrap();
+            assert!(matches!(
+                effects.as_slice(),
+                [Effect::LoadX87Real { width: actual, .. }, Effect::AdvanceRip(2)]
+                    if *actual == width
+            ));
+        }
+        for bytes in [&[0xdb, 0x28][..], &[0xd9, 0xc0], &[0x64, 0xd9, 0x00]] {
+            assert!(lift(bytes).is_err(), "{bytes:02x?}");
+        }
     }
 }

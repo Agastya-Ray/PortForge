@@ -66,6 +66,19 @@ static inline bool pf_store_xmm(struct pf_state *state, uint64_t address, size_t
     return true;
 }
 
+static inline bool pf_load_x87_real(struct pf_state *state, uint64_t address, unsigned width) {
+    if (!pf_x87_available(&state->x87)) {
+        state->x87_unsupported = true;
+        return false;
+    }
+    uint8_t *bytes;
+    if (!pf_guest_span(state, address, width / 8, 1, false, &bytes)) return false;
+    uint64_t bits = width == 32 ? pf_read_le32(bytes) : pf_read_le64(bytes);
+    if (pf_x87_load_real(&state->x87, bits, width)) return true;
+    state->x87_unsupported = true;
+    return false;
+}
+
 #define PF_ARITHMETIC_FLAGS UINT64_C(0x8d5)
 
 uint64_t pf_read_flags(const struct pf_state *state) {

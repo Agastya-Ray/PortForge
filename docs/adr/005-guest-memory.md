@@ -20,3 +20,8 @@ address and leaves RIP at the faulting instruction.
 
 MOVDQA requires 16-byte alignment. MOVDQU permits byte alignment. Both
 validate the full span before changing memory or the XMM destination.
+
+FLD reads finite binary32 and binary64 operands at byte alignment, widens
+them exactly into the x87 stack, and records the masked denormal or stack
+overflow status. The experiment stops on nonfinite operands, pending x87
+exceptions, or unmasked exception controls.
