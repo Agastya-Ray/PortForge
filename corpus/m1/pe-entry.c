@@ -29,6 +29,7 @@ static uint64_t next(uint64_t *seed) {
     return *seed;
 }
 
+#if !defined(PF_SCALAR_FIXTURE)
 static void check_stops(void) {
     uint8_t stack[STACK_SIZE], original[STACK_SIZE];
     struct pf_state state = caller(stack, 3, 3, 0, 0);
@@ -62,6 +63,7 @@ static void check_stops(void) {
     assert(pf_pe_run(&state, STOP_RIP, 16) == PF_PE_UNKNOWN_RIP);
     assert(state.rip == STOP_RIP + 8 && state.gpr[4] == STACK_BASE + STACK_SIZE);
 }
+#endif
 
 #if defined(__x86_64__)
 typedef uint64_t (__attribute__((ms_abi)) *fixture_fn)(uint64_t, uint64_t, uint64_t, uint64_t);
@@ -90,26 +92,39 @@ int main(int argc, char **argv) {
     assert(argc == 1);
 #endif
     assert(pf_pe_bind_imports(NULL, NULL, 0, 0, NULL, 0).status == PF_PE_BIND_OK);
+#if !defined(PF_SCALAR_FIXTURE)
     check_stops();
+#endif
     uint64_t seed = UINT64_C(0xd1486232cc719ac5);
     uint64_t digest = UINT64_C(14695981039346656037);
     for (unsigned i = 0; i < 1000000; ++i) {
         uint64_t a = next(&seed), b = next(&seed), c = next(&seed), d = next(&seed);
+#if defined(PF_SCALAR_FIXTURE)
+        if (i % 2 == 0) b = 17;
+        uint64_t expected = a + (b == 17 ? 23 : 0) - 41 + (uint32_t)b;
+#else
         if (i % 3 != 0) b = a;
         if (i % 3 == 2) d = 0;
+        uint64_t expected = a != b ? a - c : d ? a + d - c : a;
+#endif
         uint8_t stack[STACK_SIZE];
         struct pf_state state = caller(stack, a, b, c, d);
-        uint64_t expected = a != b ? a - c : d ? a + d - c : a;
-        assert(pf_pe_run(&state, STOP_RIP, 16) == PF_PE_RETURNED);
+        assert(pf_pe_run(&state, STOP_RIP, 64) == PF_PE_RETURNED);
         assert(state.rip == STOP_RIP && state.gpr[4] == STACK_BASE + STACK_SIZE);
         assert(state.gpr[0] == expected);
 #if defined(__x86_64__)
         assert(state.gpr[0] == native(a, b, c, d));
 #endif
+        digest = (digest ^ state.gpr[0]) * UINT64_C(1099511628211);
+#if defined(PF_SCALAR_FIXTURE)
+        for (size_t byte = 0; byte < sizeof(stack); ++byte) {
+            digest = (digest ^ stack[byte]) * UINT64_C(1099511628211);
+        }
+#else
         uint64_t pushed = pf_read_le64(stack + STACK_SIZE - 16);
         assert((a == b) == (pushed != 0));
-        digest = (digest ^ state.gpr[0]) * UINT64_C(1099511628211);
         digest = (digest ^ pushed) * UINT64_C(1099511628211);
+#endif
     }
     printf("%016" PRIx64 "\n", digest);
 }

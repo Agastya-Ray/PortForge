@@ -25,3 +25,12 @@ FLD reads finite binary32 and binary64 operands at byte alignment, widens
 them exactly into the x87 stack, and records the masked denormal or stack
 overflow status. The experiment stops on nonfinite operands, pending x87
 exceptions, or unmasked exception controls.
+Scalar MOV supports 32-bit and 64-bit registers and memory operands.
+Use the same effective-address calculation and check the full read or
+write before committing the destination. Use byte alignment for scalar
+accesses. A 32-bit register destination clears the high half of its
+64-bit register. MOV preserves flags.
+
+ADD, SUB and CMP can also take an immediate encoded in the instruction.
+Use the decoded sign extension and the destination width for the
+existing arithmetic and flag effects.

@@ -9,6 +9,14 @@ pub enum Width {
 }
 
 impl Width {
+    fn from_gpr(class: RegisterClass) -> Option<Self> {
+        match class {
+            RegisterClass::GPR32 => Some(Self::U32),
+            RegisterClass::GPR64 => Some(Self::U64),
+            _ => None,
+        }
+    }
+
     fn bits(self) -> u8 {
         match self {
             Self::U32 => 32,
@@ -69,6 +77,7 @@ impl X87 {
 
 enum Operation {
     Scalar(Arithmetic, bool),
+    Move,
     Packed(Packed),
     X87(X87),
 }
@@ -81,6 +90,21 @@ pub enum Effect {
     Read {
         into: Value,
         register: u8,
+        width: Width,
+    },
+    Constant {
+        into: Value,
+        bits: u64,
+        width: Width,
+    },
+    LoadScalar {
+        into: Value,
+        address: Address,
+        width: Width,
+    },
+    StoreScalar {
+        from: Value,
+        address: Address,
         width: Width,
     },
     Binary {
@@ -277,6 +301,7 @@ fn lift_decoded(
         }
         let operation = match instruction.mnemonic {
             Mnemonic::ADD => Operation::Scalar(Arithmetic::Add, true),
+            Mnemonic::MOV => Operation::Move,
             Mnemonic::SUB => Operation::Scalar(Arithmetic::Subtract, true),
             Mnemonic::CMP => Operation::Scalar(Arithmetic::Subtract, false),
             Mnemonic::PXOR => Operation::Packed(Packed::Xor),
@@ -332,6 +357,68 @@ fn lift_decoded(
         let [destination, source] = instruction.visible_operands() else {
             return Err(unsupported());
         };
+        let length = instruction.length;
+        if matches!(operation, Operation::Move) {
+            let address = |memory| {
+                Address::for_access(memory, instruction.address_width, length)
+                    .ok_or_else(unsupported)
+            };
+            let value = Value(next_value);
+            let (write, width) = match &destination.kind {
+                DecodedOperandKind::Reg(reg) => (
+                    Effect::Write {
+                        register: reg.id(),
+                        from: value,
+                    },
+                    Width::from_gpr(reg.class()).ok_or_else(unsupported)?,
+                ),
+                DecodedOperandKind::Mem(memory) => {
+                    let width = match destination.size {
+                        32 => Width::U32,
+                        64 => Width::U64,
+                        _ => return Err(unsupported()),
+                    };
+                    (
+                        Effect::StoreScalar {
+                            from: value,
+                            address: address(memory)?,
+                            width,
+                        },
+                        width,
+                    )
+                }
+                _ => return Err(unsupported()),
+            };
+            let read = match &source.kind {
+                DecodedOperandKind::Reg(reg) if Width::from_gpr(reg.class()) == Some(width) => {
+                    Effect::Read {
+                        into: value,
+                        register: reg.id(),
+                        width,
+                    }
+                }
+                DecodedOperandKind::Imm(imm) if !imm.is_relative => Effect::Constant {
+                    into: value,
+                    bits: imm.value,
+                    width,
+                },
+                DecodedOperandKind::Mem(memory)
+                    if matches!(write, Effect::Write { .. })
+                        && source.size == u16::from(width.bits()) =>
+                {
+                    Effect::LoadScalar {
+                        into: value,
+                        address: address(memory)?,
+                        width,
+                    }
+                }
+                _ => return Err(unsupported()),
+            };
+            effects.extend([read, write, Effect::AdvanceRip(length)]);
+            next_value += 1;
+            offset += usize::from(length);
+            continue;
+        }
         if let (
             Operation::Packed(operation),
             DecodedOperandKind::Reg(destination),
@@ -373,35 +460,37 @@ fn lift_decoded(
             offset += usize::from(length);
             continue;
         }
-        let (DecodedOperandKind::Reg(destination), DecodedOperandKind::Reg(source)) =
-            (&destination.kind, &source.kind)
-        else {
+        let DecodedOperandKind::Reg(destination) = &destination.kind else {
             return Err(unsupported());
         };
-        let classes = (destination.class(), source.class());
-        let (destination, source) = (destination.id(), source.id());
         let lhs = Value(next_value);
         let rhs = Value(next_value + 1);
         let result = Value(next_value + 2);
-        let length = instruction.length;
         match operation {
             Operation::Scalar(operation, writes) => {
-                let width = match classes {
-                    (RegisterClass::GPR32, RegisterClass::GPR32) => Width::U32,
-                    (RegisterClass::GPR64, RegisterClass::GPR64) => Width::U64,
+                let width = Width::from_gpr(destination.class()).ok_or_else(unsupported)?;
+                let right = match &source.kind {
+                    DecodedOperandKind::Reg(reg) if Width::from_gpr(reg.class()) == Some(width) => {
+                        Effect::Read {
+                            into: rhs,
+                            register: reg.id(),
+                            width,
+                        }
+                    }
+                    DecodedOperandKind::Imm(imm) if !imm.is_relative => Effect::Constant {
+                        into: rhs,
+                        bits: imm.value,
+                        width,
+                    },
                     _ => return Err(unsupported()),
                 };
                 effects.extend([
                     Effect::Read {
                         into: lhs,
-                        register: destination,
+                        register: destination.id(),
                         width,
                     },
-                    Effect::Read {
-                        into: rhs,
-                        register: source,
-                        width,
-                    },
+                    right,
                     Effect::Binary {
                         into: result,
                         operation,
@@ -419,23 +508,27 @@ fn lift_decoded(
                 ]);
                 if writes {
                     effects.push(Effect::Write {
-                        register: destination,
+                        register: destination.id(),
                         from: result,
                     });
                 }
             }
             Operation::Packed(operation) => {
-                if classes != (RegisterClass::XMM, RegisterClass::XMM) {
+                let DecodedOperandKind::Reg(source) = &source.kind else {
+                    return Err(unsupported());
+                };
+                if (destination.class(), source.class()) != (RegisterClass::XMM, RegisterClass::XMM)
+                {
                     return Err(unsupported());
                 }
                 effects.extend([
                     Effect::ReadXmm {
                         into: lhs,
-                        register: destination,
+                        register: destination.id(),
                     },
                     Effect::ReadXmm {
                         into: rhs,
-                        register: source,
+                        register: source.id(),
                     },
                     Effect::PackedBinary {
                         into: result,
@@ -444,12 +537,12 @@ fn lift_decoded(
                         rhs,
                     },
                     Effect::WriteXmm {
-                        register: destination,
+                        register: destination.id(),
                         from: result,
                     },
                 ]);
             }
-            Operation::X87(_) => unreachable!("x87 lifted above"),
+            Operation::X87(_) | Operation::Move => unreachable!("operation lifted above"),
         }
         effects.push(Effect::AdvanceRip(length));
         next_value += 3;
@@ -472,6 +565,54 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                     "    uint{width}_t v{id} = (uint{width}_t)state->gpr[{register}];"
                 )
                 .unwrap();
+            }
+            Effect::Constant {
+                into: Value(id),
+                bits,
+                width,
+            } => {
+                let width = width.bits();
+                writeln!(
+                    source,
+                    "    uint{width}_t v{id} = (uint{width}_t)UINT64_C({bits:#x});"
+                )
+                .unwrap();
+            }
+            Effect::LoadScalar {
+                into: Value(id),
+                ref address,
+                width,
+            } => {
+                let bytes = width.bits() / 8;
+                let width = width.bits();
+                let address = address.c_expression();
+                writeln!(source, "    uint8_t *p{id};").unwrap();
+                writeln!(
+                    source,
+                    "    if (!pf_guest_span(state, {address}, {bytes}, 1, false, &p{id})) return;"
+                )
+                .unwrap();
+                writeln!(
+                    source,
+                    "    uint{width}_t v{id} = pf_read_le{width}(p{id});"
+                )
+                .unwrap();
+            }
+            Effect::StoreScalar {
+                from: Value(id),
+                ref address,
+                width,
+            } => {
+                let bytes = width.bits() / 8;
+                let width = width.bits();
+                let address = address.c_expression();
+                writeln!(source, "    uint8_t *p{id};").unwrap();
+                writeln!(
+                    source,
+                    "    if (!pf_guest_span(state, {address}, {bytes}, 1, true, &p{id})) return;"
+                )
+                .unwrap();
+                writeln!(source, "    pf_write_le{width}(p{id}, v{id});").unwrap();
             }
             Effect::Binary {
                 into: Value(id),
