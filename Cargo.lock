@@ -57,6 +57,7 @@ name = "pf-ir-spike"
 version = "0.1.0"
 dependencies = [
  "pf-decode",
+ "pf-detect",
 ]
 
 [[package]]
