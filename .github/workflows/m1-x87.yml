@@ -4,16 +4,24 @@ on:
   pull_request:
     paths:
       - ".github/workflows/m1-x87.yml"
-      - "corpus/m1/**"
+      - "corpus/m1/*x87*"
+      - "corpus/m1/prepare_softfloat.sh"
+      - "corpus/m1/check_memory_ops.sh"
       - "runtime/guest/**"
-      - "lift/spike/**"
+      - "lift/**"
+      - "detect/**"
+      - "Cargo.*"
   push:
     branches: [main]
     paths:
       - ".github/workflows/m1-x87.yml"
-      - "corpus/m1/**"
+      - "corpus/m1/*x87*"
+      - "corpus/m1/prepare_softfloat.sh"
+      - "corpus/m1/check_memory_ops.sh"
       - "runtime/guest/**"
-      - "lift/spike/**"
+      - "lift/**"
+      - "detect/**"
+      - "Cargo.*"
 
 permissions:
   contents: read
@@ -35,7 +43,8 @@ jobs:
           bash corpus/m1/prepare_softfloat.sh "$RUNNER_TEMP/softfloat"
           bash corpus/m1/check_x87_add.sh "$RUNNER_TEMP/softfloat" evidence
           bash corpus/m1/check_x87_stack.sh "$RUNNER_TEMP/softfloat" evidence
-          bash corpus/m1/check_memory_ops.sh x87-memory "$RUNNER_TEMP/softfloat" | tee evidence/x87-memory.txt
+          bash corpus/m1/check_memory_ops.sh x87-memory "$RUNNER_TEMP/softfloat" > evidence/x87-memory.txt
+          cat evidence/x87-memory.txt
           printf 'memory_digest=%s\n' "$(cat evidence/x87-memory.txt)" >> "$GITHUB_OUTPUT"
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -70,7 +79,8 @@ jobs:
           bash corpus/m1/prepare_softfloat.sh "$RUNNER_TEMP/softfloat"
           bash corpus/m1/check_x87_add.sh "$RUNNER_TEMP/softfloat" evidence
           bash corpus/m1/check_x87_stack.sh "$RUNNER_TEMP/softfloat" evidence
-          bash corpus/m1/check_memory_ops.sh x87-memory "$RUNNER_TEMP/softfloat" | tee evidence/x87-memory.txt
+          bash corpus/m1/check_memory_ops.sh x87-memory "$RUNNER_TEMP/softfloat" > evidence/x87-memory.txt
+          cat evidence/x87-memory.txt
           test "$(cat evidence/x87-memory.txt)" = "$MEMORY_DIGEST"
           python3 - <<'PY'
           import json, os

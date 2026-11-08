@@ -4,18 +4,32 @@ on:
   pull_request:
     paths:
       - ".github/workflows/m1-remill.yml"
-      - "corpus/m1/**"
+      - "corpus/m1/*remill*"
+      - "corpus/m1/*arithmetic*"
+      - "corpus/m1/blocks.sh"
+      - "corpus/m1/sse2.c"
+      - "corpus/m1/sse2_blocks.sh"
+      - "corpus/m1/check_sse2.sh"
       - "lift/decode/**"
       - "lift/spike/**"
+      - "runtime/guest/**"
+      - "detect/**"
       - "Cargo.toml"
       - "Cargo.lock"
   push:
     branches: [main]
     paths:
       - ".github/workflows/m1-remill.yml"
-      - "corpus/m1/**"
+      - "corpus/m1/*remill*"
+      - "corpus/m1/*arithmetic*"
+      - "corpus/m1/blocks.sh"
+      - "corpus/m1/sse2.c"
+      - "corpus/m1/sse2_blocks.sh"
+      - "corpus/m1/check_sse2.sh"
       - "lift/decode/**"
       - "lift/spike/**"
+      - "runtime/guest/**"
+      - "detect/**"
       - "Cargo.toml"
       - "Cargo.lock"
 
