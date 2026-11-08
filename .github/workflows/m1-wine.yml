@@ -41,18 +41,23 @@ jobs:
     needs: reference
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 12
+    # Noble's ARM64 Wine 9 hangs at startup (Launchpad #2102681).
+    # Debian 13 ships the Clang-built ARM64 Wine 10 (Debian #1100695).
+    container: debian:13-slim
     steps:
+      - run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git gcc libc6-dev make cmake cargo rustc wine64 wine64-tools
+          rustc --version | grep '^rustc 1\.85\.1 '
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: wine-x86-reference
           path: reference/
       - run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine64 wine64-tools
-          rustup toolchain install 1.85.1 --profile minimal
-          rustup override set 1.85.1
           cargo fetch --locked
+          unset TMPDIR
           bash corpus/m1/check_pe_wine.sh evidence reference
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

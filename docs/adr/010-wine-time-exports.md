@@ -16,6 +16,10 @@ Use fixed FILETIME inputs to compare translated guest calls with direct
 Win32 calls inside Wine on x86-64 and ARM64. Record the generated C and
 the output digest as CI evidence.
 
+The ARM64 runner uses Debian 13 Wine because Ubuntu 24.04's ARM64
+Wine package hangs at startup. See [Ubuntu #2102681](https://bugs.launchpad.net/ubuntu/+source/wine/+bug/2102681)
+and [Debian #1100695](https://bugs.debian.org/1100695).
+
 This slice covers two time conversion exports from kernel32. A
 general Windows API surface, arbitrary DLLs, and game execution
 remain separate work.
