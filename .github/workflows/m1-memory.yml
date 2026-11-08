@@ -7,6 +7,7 @@ on:
       - "runtime/guest/memory.h"
       - "corpus/m1/memory.c"
       - "corpus/m1/lea*"
+      - "corpus/m1/sse2-memory*"
       - "corpus/m1/check_memory_ops.sh"
       - "lift/**"
   push:
@@ -16,6 +17,7 @@ on:
       - "runtime/guest/memory.h"
       - "corpus/m1/memory.c"
       - "corpus/m1/lea*"
+      - "corpus/m1/sse2-memory*"
       - "corpus/m1/check_memory_ops.sh"
       - "lift/**"
 
@@ -38,3 +40,4 @@ jobs:
           rustup override set 1.85.1
           cargo fetch --locked
           bash corpus/m1/check_memory_ops.sh lea
+          bash corpus/m1/check_memory_ops.sh sse2-memory

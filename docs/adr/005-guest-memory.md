@@ -12,3 +12,8 @@ PFIR computes effective addresses before any access. Address-size overrides
 truncate to 32 bits, RIP-relative operands use the next instruction address,
 and signed displacements participate in unsigned wrapping arithmetic. LEA
 computes this value without reading memory or changing flags.
+
+Legacy SSE2 packed memory arithmetic uses a checked 16-byte aligned read
+before committing the XMM destination. Explicit FS and GS memory operands
+remain outside this flat-address experiment. A fault records the effective
+address and leaves RIP at the faulting instruction.

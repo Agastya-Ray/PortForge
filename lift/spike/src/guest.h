@@ -4,6 +4,10 @@
 #include "../../../runtime/guest/x87.h"
 #endif
 
+#ifndef PF_MEMORY_H
+#include "../../../runtime/guest/memory.h"
+#endif
+
 #if defined(__aarch64__) && !defined(PF_PORTABLE_ONLY)
 #include <arm_neon.h>
 #endif
@@ -29,9 +33,29 @@ struct pf_state {
     struct pf_xmm xmm[16];
     struct pf_x87_state x87;
     bool x87_unsupported;
+    struct pf_memory memory;
+    enum pf_memory_fault memory_fault;
+    uint64_t fault_address;
     uint64_t rip, rflags;
     struct pf_pending pending;
 };
+
+static inline bool pf_guest_span(struct pf_state *state, uint64_t address, size_t width,
+                                 size_t alignment, bool write, uint8_t **out) {
+    enum pf_memory_fault fault = pf_memory_span(&state->memory, address, width, alignment, write, out);
+    if (fault == PF_MEM_OK) return true;
+    state->memory_fault = fault;
+    state->fault_address = address;
+    return false;
+}
+
+static inline bool pf_load_xmm(struct pf_state *state, uint64_t address, size_t alignment,
+                               struct pf_xmm *value) {
+    uint8_t *bytes;
+    if (!pf_guest_span(state, address, 16, alignment, false, &bytes)) return false;
+    *value = (struct pf_xmm){{pf_read_le64(bytes), pf_read_le64(bytes + 8)}};
+    return true;
+}
 
 #define PF_ARITHMETIC_FLAGS UINT64_C(0x8d5)
 

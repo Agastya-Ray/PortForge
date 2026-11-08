@@ -32,6 +32,13 @@ impl Address {
         })
     }
 
+    pub fn for_access(memory: &MemoryInfo, width: u8, length: u8) -> Option<Self> {
+        if matches!(memory.segment, Register::FS | Register::GS) {
+            return None;
+        }
+        Self::new(memory, width, length)
+    }
+
     pub fn c_expression(&self) -> String {
         let base = match self.base {
             Register::NONE => "UINT64_C(0)".into(),
