@@ -15,6 +15,9 @@ then release the DLL handle. The guest sees only its import tokens.
 Use fixed FILETIME inputs to compare translated guest calls with direct
 Win32 calls inside Wine on x86-64 and ARM64. Record the generated C and
 the output digest as CI evidence.
+The harness writes sixteen lowercase hexadecimal characters and one LF
+byte. The Windows build sets its output stream to binary mode so the
+C runtime preserves that byte. CI checks the raw output without editing it.
 
 The x86-64 harness uses an ELF Winelib executable. The ARM64 harness
 uses a native Windows executable, since the ELF module prologue emitted

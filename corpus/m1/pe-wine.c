@@ -1,6 +1,10 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
+#ifdef __MSVCRT__
+#include <fcntl.h>
+#include <io.h>
+#endif
 #include "lifted.c"
 #include "runtime/host/wine_imports.h"
 
@@ -37,6 +41,13 @@ static FILETIME filetime(uint64_t bits) {
 }
 
 int main(void) {
+#ifdef __MSVCRT__
+    /* The evidence format is ASCII hex followed by one LF byte. */
+    if (_setmode(_fileno(stdout), _O_BINARY) == -1) {
+        perror("PortForge could not set binary evidence output");
+        return 1;
+    }
+#endif
     struct pf_wine_api api;
     DWORD error = pf_wine_open(&api);
     if (error != ERROR_SUCCESS) {
@@ -84,5 +95,9 @@ int main(void) {
     assert(pf_pe_run_bound(&state, STOP, 16, bindings, 2) == PF_PE_RETURNED && !state.gpr[0]);
     for (size_t i = 0; i < sizeof(output); ++i) assert(memory[SECOND_BUFFER + i] == 0xa5);
     pf_wine_close(&api);
-    printf("%016" PRIx64 "\n", digest);
+    if (printf("%016" PRIx64 "\n", digest) < 0 || fflush(stdout) != 0) {
+        perror("PortForge could not write Wine evidence");
+        return 1;
+    }
+    return 0;
 }
