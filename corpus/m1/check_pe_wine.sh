@@ -28,11 +28,18 @@ cmp "$evidence/lifted.c" "$tmp/repeated.c"
 winegcc=${WINEGCC:-winegcc}
 if [[ -z ${WINEGCC:-} ]] && ! command -v "$winegcc" >/dev/null; then winegcc=winegcc-stable; fi
 loader=${WINELOADER:-/usr/lib/wine/wine64}
+target=()
+executable="$tmp/check.exe.so"
+if [[ $(uname -m) == aarch64 ]]; then
+    # Wine's ELF Winelib output uses an x86-specific module prologue.
+    target=(--target=aarch64-windows)
+    executable="$tmp/check.exe"
+fi
 export WINEPREFIX="$tmp/prefix" WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
-"$winegcc" -std=gnu11 -O2 -Wall -Wextra -Werror -I"$PWD" -I"$evidence" \
+"$winegcc" "${target[@]}" -std=gnu11 -O2 -Wall -Wextra -Werror -I"$PWD" -I"$evidence" \
     corpus/m1/pe-wine.c -o "$tmp/check.exe"
 "$loader" --version | tee "$evidence/wine-version.txt"
-timeout 120 "$loader" "$tmp/check.exe.so" | tee "$evidence/digest.txt"
+timeout 120 "$loader" "$executable" | tee "$evidence/digest.txt"
 [[ $(cat "$evidence/digest.txt") =~ ^[0-9a-f]{16}$ ]]
 if [[ $(uname -m) != x86_64 ]]; then
     cmp "$evidence/lifted.c" "$reference/lifted.c"
