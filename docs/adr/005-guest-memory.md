@@ -17,3 +17,6 @@ Legacy SSE2 packed memory arithmetic uses a checked 16-byte aligned read
 before committing the XMM destination. Explicit FS and GS memory operands
 remain outside this flat-address experiment. A fault records the effective
 address and leaves RIP at the faulting instruction.
+
+MOVDQA requires 16-byte alignment. MOVDQU permits byte alignment. Both
+validate the full span before changing memory or the XMM destination.

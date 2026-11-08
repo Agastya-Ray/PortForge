@@ -57,6 +57,15 @@ static inline bool pf_load_xmm(struct pf_state *state, uint64_t address, size_t 
     return true;
 }
 
+static inline bool pf_store_xmm(struct pf_state *state, uint64_t address, size_t alignment,
+                                struct pf_xmm value) {
+    uint8_t *bytes;
+    if (!pf_guest_span(state, address, 16, alignment, true, &bytes)) return false;
+    pf_write_le64(bytes, value.qword[0]);
+    pf_write_le64(bytes + 8, value.qword[1]);
+    return true;
+}
+
 #define PF_ARITHMETIC_FLAGS UINT64_C(0x8d5)
 
 uint64_t pf_read_flags(const struct pf_state *state) {

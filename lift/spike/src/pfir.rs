@@ -125,6 +125,11 @@ pub enum Effect {
         address: Address,
         alignment: u8,
     },
+    StoreXmm {
+        from: Value,
+        address: Address,
+        alignment: u8,
+    },
     EffectiveAddress {
         into: Value,
         address: Address,
@@ -142,6 +147,54 @@ pub fn lift(bytes: &[u8]) -> Result<Vec<Effect>, String> {
         let instruction = decoder
             .decode(&bytes[offset..])
             .map_err(|error| format!("{error} at offset {offset}"))?;
+        if matches!(instruction.mnemonic, Mnemonic::MOVDQA | Mnemonic::MOVDQU) {
+            let alignment = if instruction.mnemonic == Mnemonic::MOVDQA {
+                16
+            } else {
+                1
+            };
+            let length = instruction.length;
+            let error = || format!("unsupported XMM move operands at offset {offset}");
+            let [destination, source] = instruction.visible_operands() else {
+                return Err(error());
+            };
+            let value = Value(next_value);
+            let address = |memory| {
+                Address::for_access(memory, instruction.address_width, length).ok_or_else(error)
+            };
+            let read = match &source.kind {
+                DecodedOperandKind::Reg(reg) if reg.class() == RegisterClass::XMM => {
+                    Effect::ReadXmm {
+                        into: value,
+                        register: reg.id(),
+                    }
+                }
+                DecodedOperandKind::Mem(memory) if source.size == 128 => Effect::LoadXmm {
+                    into: value,
+                    address: address(memory)?,
+                    alignment,
+                },
+                _ => return Err(error()),
+            };
+            let write = match &destination.kind {
+                DecodedOperandKind::Reg(reg) if reg.class() == RegisterClass::XMM => {
+                    Effect::WriteXmm {
+                        register: reg.id(),
+                        from: value,
+                    }
+                }
+                DecodedOperandKind::Mem(memory) if destination.size == 128 => Effect::StoreXmm {
+                    from: value,
+                    address: address(memory)?,
+                    alignment,
+                },
+                _ => return Err(error()),
+            };
+            effects.extend([read, write, Effect::AdvanceRip(length)]);
+            next_value += 1;
+            offset += usize::from(length);
+            continue;
+        }
         if instruction.mnemonic == Mnemonic::LEA {
             let error = || format!("unsupported LEA operands at offset {offset}");
             let [destination, memory] = instruction.visible_operands() else {
@@ -461,6 +514,18 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 writeln!(
                     source,
                     "    if (!pf_load_xmm(state, {expression}, {alignment}, &v{id})) return;"
+                )
+                .unwrap();
+            }
+            Effect::StoreXmm {
+                from: Value(id),
+                ref address,
+                alignment,
+            } => {
+                let expression = address.c_expression();
+                writeln!(
+                    source,
+                    "    if (!pf_store_xmm(state, {expression}, {alignment}, v{id})) return;"
                 )
                 .unwrap();
             }
