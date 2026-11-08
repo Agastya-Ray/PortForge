@@ -18,7 +18,7 @@ struct pf_pe_import {
     uint16_t ordinal;
 };
 
-typedef uint64_t (*pf_pe_host_fn)(uint64_t, uint64_t, uint64_t, uint64_t);
+typedef uint64_t (*pf_pe_host_fn)(void *, uint64_t, uint64_t, uint64_t, uint64_t);
 
 struct pf_pe_guest_arg {
     size_t size;
@@ -28,6 +28,7 @@ struct pf_pe_guest_arg {
 struct pf_pe_binding {
     uint64_t target;
     pf_pe_host_fn invoke;
+    void *context;
     struct pf_pe_guest_arg args[4];
 };
 
@@ -36,6 +37,7 @@ struct pf_pe_export {
     const char *name;
     uint16_t ordinal;
     pf_pe_host_fn invoke;
+    void *context;
     struct pf_pe_guest_arg args[4];
 };
 
@@ -134,6 +136,7 @@ struct pf_pe_bind_result pf_pe_bind_imports(struct pf_state *state, const struct
         }
         staged[i].binding = (struct pf_pe_binding){
             .target = first_target + i * UINT64_C(8), .invoke = match->invoke,
+            .context = match->context,
         };
         memcpy(staged[i].binding.args, match->args, sizeof(staged[i].binding.args));
     }
@@ -192,7 +195,7 @@ static inline bool pf_pe_import_call(struct pf_state *state, uint64_t slot,
     }
     pf_pe_call(state, target, return_rip);
     if (state->memory_fault != PF_MEM_OK) return false;
-    state->gpr[0] = binding->invoke(args[0], args[1], args[2], args[3]);
+    state->gpr[0] = binding->invoke(binding->context, args[0], args[1], args[2], args[3]);
     pf_pe_return(state);
     return state->memory_fault == PF_MEM_OK;
 }

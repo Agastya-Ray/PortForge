@@ -16,12 +16,14 @@
 
 static unsigned host_calls;
 
-static uint64_t by_name(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+static uint64_t by_name(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)context;
     ++host_calls;
     return (a ^ (b + c * 3)) - d;
 }
 
-static uint64_t by_ordinal(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+static uint64_t by_ordinal(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)context;
     ++host_calls;
     return ((a - c) ^ d) + b * 5;
 }
@@ -31,7 +33,8 @@ static const struct pf_pe_export scalar_exports[] = {
     {.dll = "Fixture.dll", .name = "MixFour", .invoke = by_name},
 };
 
-static uint64_t pointers_by_name(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+static uint64_t pointers_by_name(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)context;
     ++host_calls;
     uint64_t result = pf_read_le64((const uint8_t *)(uintptr_t)b) ^ c;
     pf_write_le64((uint8_t *)(uintptr_t)a, result);
@@ -39,7 +42,8 @@ static uint64_t pointers_by_name(uint64_t a, uint64_t b, uint64_t c, uint64_t d)
     return result;
 }
 
-static uint64_t pointers_by_ordinal(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+static uint64_t pointers_by_ordinal(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)context;
     ++host_calls;
     uint64_t result = pf_read_le64((const uint8_t *)(uintptr_t)b) + c;
     pf_write_le64((uint8_t *)(uintptr_t)a, result);
@@ -179,19 +183,19 @@ static uint64_t next(uint64_t *seed) {
 typedef uint64_t (__attribute__((ms_abi)) *win_fn)(uint64_t, uint64_t, uint64_t, uint64_t);
 
 static uint64_t __attribute__((ms_abi)) native_name(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
-    return by_name(a, b, c, d);
+    return by_name(NULL, a, b, c, d);
 }
 
 static uint64_t __attribute__((ms_abi)) native_ordinal(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
-    return by_ordinal(a, b, c, d);
+    return by_ordinal(NULL, a, b, c, d);
 }
 
 static uint64_t __attribute__((ms_abi)) native_pointer_name(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
-    return pointers_by_name(a, b, c, d);
+    return pointers_by_name(NULL, a, b, c, d);
 }
 
 static uint64_t __attribute__((ms_abi)) native_pointer_ordinal(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
-    return pointers_by_ordinal(a, b, c, d);
+    return pointers_by_ordinal(NULL, a, b, c, d);
 }
 
 static win_fn load_fixture(const char *path, win_fn named, win_fn ordinal) {

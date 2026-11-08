@@ -4,7 +4,9 @@ from pathlib import Path
 import struct
 import sys
 
-template, executable, flat = map(Path, sys.argv[1:])
+template, executable, flat = map(Path, sys.argv[1:4])
+assert sys.argv[4:] in ([], ["wine"])
+wine = sys.argv[4:] == ["wine"]
 data = bytearray(template.read_bytes())
 pe = struct.unpack_from("<I", data, 0x3C)[0]
 section_count = struct.unpack_from("<H", data, pe + 6)[0]
@@ -20,14 +22,18 @@ for i in range(section_count):
 size, rva, _, raw = sections[b".data"]
 assert size >= 256
 iat, directory, lookup, dll, name = (0, 32, 80, 112, 144)
-entries = (rva + name, (1 << 63) | 17, 0)
+second_name = 176
+entries = (rva + name, rva + second_name if wine else (1 << 63) | 17, 0)
 for offset in (iat, lookup):
     struct.pack_into("<QQQ", data, raw + offset, *entries)
 struct.pack_into("<IIIII", data, raw + directory, rva + lookup, 0, 0, rva + dll, rva + iat)
-dll_name = b"Fixture.DLL\0"
+dll_name = b"KERNEL32.DLL\0" if wine else b"Fixture.DLL\0"
 data[raw + dll:raw + dll + len(dll_name)] = dll_name
-hint_and_name = b"\0\0MixFour\0"
+hint_and_name = b"\0\0CompareFileTime\0" if wine else b"\0\0MixFour\0"
 data[raw + name:raw + name + len(hint_and_name)] = hint_and_name
+if wine:
+    hint_and_name = b"\0\0FileTimeToSystemTime\0"
+    data[raw + second_name:raw + second_name + len(hint_and_name)] = hint_and_name
 struct.pack_into("<II", data, optional + 112 + 8, rva + directory, 40)
 struct.pack_into("<II", data, optional + 112 + 12 * 8, rva + iat, 24)
 executable.write_bytes(data)
