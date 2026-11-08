@@ -48,7 +48,7 @@ jobs:
       - run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates git gcc libc6-dev make cmake cargo rustc wine64 wine64-tools
+            ca-certificates git gcc g++ libc6-dev make cmake cargo rustc wine64 wine64-tools
           rustc --version | grep '^rustc 1\.85\.1 '
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
