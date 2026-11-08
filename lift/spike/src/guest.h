@@ -20,7 +20,7 @@ _Static_assert(sizeof(struct pf_xmm) == 16, "XMM layout");
 
 enum pf_packed_op { PF_PXOR, PF_PADDD, PF_PADDQ, PF_PSUBD, PF_PSUBQ };
 
-enum pf_arithmetic { PF_NO_FLAGS, PF_ADD, PF_SUB };
+enum pf_arithmetic { PF_NO_FLAGS, PF_ADD, PF_SUB, PF_LOGIC, PF_INC, PF_DEC };
 
 struct pf_pending {
     uint64_t lhs, rhs, result;
@@ -38,6 +38,8 @@ struct pf_state {
     uint64_t fault_address;
     uint64_t rip, rflags;
     struct pf_pending pending;
+    bool pe_exited;
+    uint32_t pe_exit_code;
 };
 
 static inline bool pf_guest_span(struct pf_state *state, uint64_t address, size_t width,
@@ -47,6 +49,24 @@ static inline bool pf_guest_span(struct pf_state *state, uint64_t address, size_
     state->memory_fault = fault;
     state->fault_address = address;
     return false;
+}
+
+static inline bool pf_push(struct pf_state *state, uint64_t value) {
+    uint64_t rsp = state->gpr[4] - 8;
+    uint8_t *bytes;
+    if (!pf_guest_span(state, rsp, 8, 1, true, &bytes)) return false;
+    pf_write_le64(bytes, value);
+    state->gpr[4] = rsp;
+    return true;
+}
+
+static inline bool pf_pop(struct pf_state *state, unsigned destination) {
+    uint8_t *bytes;
+    if (!pf_guest_span(state, state->gpr[4], 8, 1, false, &bytes)) return false;
+    uint64_t value = pf_read_le64(bytes);
+    state->gpr[4] += 8;
+    state->gpr[destination] = value;
+    return true;
 }
 
 static inline bool pf_load_xmm(struct pf_state *state, uint64_t address, size_t alignment,
@@ -91,14 +111,17 @@ uint64_t pf_read_flags(const struct pf_state *state) {
     uint64_t rhs = flags->rhs;
     uint64_t result = flags->result;
     uint64_t sign = UINT64_C(1) << (flags->width - 1);
-    unsigned carry, overflow;
-    if (flags->operation == PF_ADD) {
+    unsigned carry = 0, overflow = 0;
+    uint64_t auxiliary = state->rflags & UINT64_C(0x10);
+    if (flags->operation == PF_ADD || flags->operation == PF_INC) {
         carry = result < lhs;
         overflow = (~(lhs ^ rhs) & (lhs ^ result) & sign) != 0;
-    } else {
+    } else if (flags->operation == PF_SUB || flags->operation == PF_DEC) {
         carry = lhs < rhs;
         overflow = ((lhs ^ rhs) & (lhs ^ result) & sign) != 0;
     }
+    if (flags->operation == PF_INC || flags->operation == PF_DEC) carry = state->rflags & 1;
+    if (flags->operation != PF_LOGIC) auxiliary = (lhs ^ rhs ^ result) & UINT64_C(0x10);
     unsigned low = (unsigned)(result & 255);
     low ^= low >> 4;
     low ^= low >> 2;
@@ -106,12 +129,31 @@ uint64_t pf_read_flags(const struct pf_state *state) {
     return (state->rflags & ~PF_ARITHMETIC_FLAGS)
         | carry
         | ((uint64_t)((low & 1) == 0) << 2)
-        | ((lhs ^ rhs ^ result) & UINT64_C(0x10))
+        | auxiliary
         | ((uint64_t)(result == 0) << 6)
         | ((uint64_t)((result & sign) != 0) << 7)
         | ((uint64_t)overflow << 11);
 }
 
+
+static inline bool pf_condition(uint64_t flags, unsigned condition) {
+    bool carry = (flags & UINT64_C(0x001)) != 0;
+    bool zero = (flags & UINT64_C(0x040)) != 0;
+    bool sign = (flags & UINT64_C(0x080)) != 0;
+    bool overflow = (flags & UINT64_C(0x800)) != 0;
+    bool taken;
+    switch (condition >> 1) {
+    case 0: taken = overflow; break;
+    case 1: taken = carry; break;
+    case 2: taken = zero; break;
+    case 3: taken = carry || zero; break;
+    case 4: taken = sign; break;
+    case 5: taken = (flags & UINT64_C(0x004)) != 0; break;
+    case 6: taken = sign != overflow; break;
+    default: taken = zero || sign != overflow; break;
+    }
+    return taken != ((condition & 1) != 0);
+}
 
 static inline struct pf_xmm pf_packed(enum pf_packed_op op, struct pf_xmm a, struct pf_xmm b) {
     struct pf_xmm result = {0};

@@ -6,6 +6,8 @@ on:
       - ".github/workflows/m1-wine.yml"
       - "corpus/m1/*pe-wine*"
       - "corpus/m1/check_pe_wine.sh"
+      - "corpus/m1/*pe-console*"
+      - "corpus/m1/check_pe_console.sh"
       - "corpus/m1/pe-import.s"
       - "corpus/m1/pe_import_fixture.py"
       - "runtime/**"
@@ -26,11 +28,12 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine64 wine64-tools
+          sudo apt-get install -y --no-install-recommends wine64 wine64-tools clang-19 lld-19
           rustup toolchain install 1.85.1 --profile minimal
           rustup override set 1.85.1
           cargo fetch --locked
           bash corpus/m1/check_pe_wine.sh evidence
+          WINDOWS_CC=clang-19 LLD_LINK=lld-link-19 bash corpus/m1/check_pe_console.sh evidence/console
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: wine-x86-reference
@@ -48,7 +51,7 @@ jobs:
       - run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates git gcc g++ clang lld libc6-dev make cmake cargo rustc wine64 wine64-tools
+            ca-certificates git gcc g++ clang lld libc6-dev make cmake cargo rustc python3 wine64 wine64-tools
           rustc --version | grep '^rustc 1\.85\.1 '
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -59,6 +62,7 @@ jobs:
           cargo fetch --locked
           unset TMPDIR
           bash corpus/m1/check_pe_wine.sh evidence reference
+          bash corpus/m1/check_pe_console.sh evidence/console reference/console
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: wine-arm64

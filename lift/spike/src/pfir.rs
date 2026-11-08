@@ -23,12 +23,47 @@ impl Width {
             Self::U64 => 64,
         }
     }
+
+    fn from_bits(bits: u16) -> Option<Self> {
+        match bits {
+            32 => Some(Self::U32),
+            64 => Some(Self::U64),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Arithmetic {
     Add,
     Subtract,
+    And,
+    Or,
+    Xor,
+    Increment,
+    Decrement,
+}
+
+impl Arithmetic {
+    fn c_operator(self) -> char {
+        match self {
+            Self::Add | Self::Increment => '+',
+            Self::Subtract | Self::Decrement => '-',
+            Self::And => '&',
+            Self::Or => '|',
+            Self::Xor => '^',
+        }
+    }
+
+    fn c_flags(self) -> &'static str {
+        match self {
+            Self::Add => "PF_ADD",
+            Self::Subtract => "PF_SUB",
+            Self::And | Self::Or | Self::Xor => "PF_LOGIC",
+            Self::Increment => "PF_INC",
+            Self::Decrement => "PF_DEC",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +113,7 @@ impl X87 {
 enum Operation {
     Scalar(Arithmetic, bool),
     Move,
+    ConditionalMove,
     Packed(Packed),
     X87(X87),
 }
@@ -118,6 +154,14 @@ pub enum Effect {
         register: u8,
         from: Value,
     },
+    ConditionalWrite {
+        register: u8,
+        from: Value,
+        width: Width,
+        condition: u8,
+    },
+    Push(u8),
+    Pop(u8),
     PendingFlags {
         operation: Arithmetic,
         width: Width,
@@ -193,6 +237,80 @@ fn lift_decoded(
     let mut next_value = 0;
     for instruction in instructions {
         let instruction = instruction?;
+        let length = instruction.length;
+        if instruction.mnemonic == Mnemonic::NOP {
+            effects.push(Effect::AdvanceRip(length));
+            offset += usize::from(length);
+            continue;
+        }
+        if matches!(
+            instruction.mnemonic,
+            Mnemonic::PUSH | Mnemonic::POP | Mnemonic::INC | Mnemonic::DEC
+        ) {
+            let unsupported = || {
+                format!(
+                    "decoded {} at offset {offset}; unsupported operands",
+                    instruction.mnemonic
+                )
+            };
+            let [operand] = instruction.visible_operands() else {
+                return Err(unsupported());
+            };
+            let DecodedOperandKind::Reg(register) = operand.kind else {
+                return Err(unsupported());
+            };
+            let width = Width::from_gpr(register.class()).ok_or_else(unsupported)?;
+            let register = register.id();
+            match instruction.mnemonic {
+                Mnemonic::PUSH if width == Width::U64 => effects.push(Effect::Push(register)),
+                Mnemonic::POP if width == Width::U64 => effects.push(Effect::Pop(register)),
+                Mnemonic::INC | Mnemonic::DEC => {
+                    let operation = if instruction.mnemonic == Mnemonic::INC {
+                        Arithmetic::Increment
+                    } else {
+                        Arithmetic::Decrement
+                    };
+                    let lhs = Value(next_value);
+                    let rhs = Value(next_value + 1);
+                    let result = Value(next_value + 2);
+                    effects.extend([
+                        Effect::Read {
+                            into: lhs,
+                            register,
+                            width,
+                        },
+                        Effect::Constant {
+                            into: rhs,
+                            bits: 1,
+                            width,
+                        },
+                        Effect::Binary {
+                            into: result,
+                            operation,
+                            width,
+                            lhs,
+                            rhs,
+                        },
+                        Effect::PendingFlags {
+                            operation,
+                            width,
+                            lhs,
+                            rhs,
+                            result,
+                        },
+                        Effect::Write {
+                            register,
+                            from: result,
+                        },
+                    ]);
+                    next_value += 3;
+                }
+                _ => return Err(unsupported()),
+            }
+            effects.push(Effect::AdvanceRip(length));
+            offset += usize::from(length);
+            continue;
+        }
         if instruction.mnemonic == Mnemonic::FLD {
             let error = || format!("unsupported FLD operand at offset {offset}");
             let [source] = instruction.visible_operands() else {
@@ -304,6 +422,26 @@ fn lift_decoded(
             Mnemonic::MOV => Operation::Move,
             Mnemonic::SUB => Operation::Scalar(Arithmetic::Subtract, true),
             Mnemonic::CMP => Operation::Scalar(Arithmetic::Subtract, false),
+            Mnemonic::TEST => Operation::Scalar(Arithmetic::And, false),
+            Mnemonic::AND => Operation::Scalar(Arithmetic::And, true),
+            Mnemonic::OR => Operation::Scalar(Arithmetic::Or, true),
+            Mnemonic::XOR => Operation::Scalar(Arithmetic::Xor, true),
+            Mnemonic::CMOVO
+            | Mnemonic::CMOVNO
+            | Mnemonic::CMOVB
+            | Mnemonic::CMOVNB
+            | Mnemonic::CMOVZ
+            | Mnemonic::CMOVNZ
+            | Mnemonic::CMOVBE
+            | Mnemonic::CMOVNBE
+            | Mnemonic::CMOVS
+            | Mnemonic::CMOVNS
+            | Mnemonic::CMOVP
+            | Mnemonic::CMOVNP
+            | Mnemonic::CMOVL
+            | Mnemonic::CMOVNL
+            | Mnemonic::CMOVLE
+            | Mnemonic::CMOVNLE => Operation::ConditionalMove,
             Mnemonic::PXOR => Operation::Packed(Packed::Xor),
             Mnemonic::PADDD => Operation::Packed(Packed::AddDwords),
             Mnemonic::PADDQ => Operation::Packed(Packed::AddQwords),
@@ -373,11 +511,7 @@ fn lift_decoded(
                     Width::from_gpr(reg.class()).ok_or_else(unsupported)?,
                 ),
                 DecodedOperandKind::Mem(memory) => {
-                    let width = match destination.size {
-                        32 => Width::U32,
-                        64 => Width::U64,
-                        _ => return Err(unsupported()),
-                    };
+                    let width = Width::from_bits(destination.size).ok_or_else(unsupported)?;
                     (
                         Effect::StoreScalar {
                             from: value,
@@ -460,15 +594,37 @@ fn lift_decoded(
             offset += usize::from(length);
             continue;
         }
-        let DecodedOperandKind::Reg(destination) = &destination.kind else {
-            return Err(unsupported());
-        };
         let lhs = Value(next_value);
         let rhs = Value(next_value + 1);
         let result = Value(next_value + 2);
         match operation {
             Operation::Scalar(operation, writes) => {
-                let width = Width::from_gpr(destination.class()).ok_or_else(unsupported)?;
+                let width = Width::from_bits(destination.size).ok_or_else(unsupported)?;
+                let address = |memory| {
+                    Address::for_access(memory, instruction.address_width, length)
+                        .ok_or_else(unsupported)
+                };
+                let (left, destination) = match &destination.kind {
+                    DecodedOperandKind::Reg(reg) if Width::from_gpr(reg.class()) == Some(width) => {
+                        (
+                            Effect::Read {
+                                into: lhs,
+                                register: reg.id(),
+                                width,
+                            },
+                            Some(reg.id()),
+                        )
+                    }
+                    DecodedOperandKind::Mem(memory) if !writes => (
+                        Effect::LoadScalar {
+                            into: lhs,
+                            address: address(memory)?,
+                            width,
+                        },
+                        None,
+                    ),
+                    _ => return Err(unsupported()),
+                };
                 let right = match &source.kind {
                     DecodedOperandKind::Reg(reg) if Width::from_gpr(reg.class()) == Some(width) => {
                         Effect::Read {
@@ -482,14 +638,17 @@ fn lift_decoded(
                         bits: imm.value,
                         width,
                     },
+                    DecodedOperandKind::Mem(memory) if source.size == u16::from(width.bits()) => {
+                        Effect::LoadScalar {
+                            into: rhs,
+                            address: address(memory)?,
+                            width,
+                        }
+                    }
                     _ => return Err(unsupported()),
                 };
                 effects.extend([
-                    Effect::Read {
-                        into: lhs,
-                        register: destination.id(),
-                        width,
-                    },
+                    left,
                     right,
                     Effect::Binary {
                         into: result,
@@ -506,15 +665,41 @@ fn lift_decoded(
                         result,
                     },
                 ]);
-                if writes {
+                if let Some(register) = destination.filter(|_| writes) {
                     effects.push(Effect::Write {
-                        register: destination.id(),
+                        register,
                         from: result,
                     });
                 }
             }
+            Operation::ConditionalMove => {
+                let (DecodedOperandKind::Reg(destination), DecodedOperandKind::Reg(source)) =
+                    (&destination.kind, &source.kind)
+                else {
+                    return Err(unsupported());
+                };
+                let width = Width::from_gpr(destination.class()).ok_or_else(unsupported)?;
+                if Width::from_gpr(source.class()) != Some(width) {
+                    return Err(unsupported());
+                }
+                effects.extend([
+                    Effect::Read {
+                        into: lhs,
+                        register: source.id(),
+                        width,
+                    },
+                    Effect::ConditionalWrite {
+                        register: destination.id(),
+                        from: lhs,
+                        width,
+                        condition: instruction.opcode & 15,
+                    },
+                ]);
+            }
             Operation::Packed(operation) => {
-                let DecodedOperandKind::Reg(source) = &source.kind else {
+                let (DecodedOperandKind::Reg(destination), DecodedOperandKind::Reg(source)) =
+                    (&destination.kind, &source.kind)
+                else {
                     return Err(unsupported());
                 };
                 if (destination.class(), source.class()) != (RegisterClass::XMM, RegisterClass::XMM)
@@ -621,11 +806,7 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 lhs: Value(lhs),
                 rhs: Value(rhs),
             } => {
-                let operator = if operation == Arithmetic::Add {
-                    '+'
-                } else {
-                    '-'
-                };
+                let operator = operation.c_operator();
                 let width = width.bits();
                 writeln!(
                     source,
@@ -639,6 +820,25 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
             } => {
                 writeln!(source, "    state->gpr[{register}] = v{id};").unwrap();
             }
+            Effect::ConditionalWrite {
+                register,
+                from: Value(id),
+                width,
+                condition,
+            } => {
+                let width = width.bits();
+                writeln!(source, "    state->gpr[{register}] = pf_condition(pf_read_flags(state), {condition}) ? v{id} : (uint{width}_t)state->gpr[{register}];").unwrap();
+            }
+            Effect::Push(register) => {
+                writeln!(
+                    source,
+                    "    if (!pf_push(state, state->gpr[{register}])) return;"
+                )
+                .unwrap();
+            }
+            Effect::Pop(register) => {
+                writeln!(source, "    if (!pf_pop(state, {register})) return;").unwrap();
+            }
             Effect::PendingFlags {
                 operation,
                 width,
@@ -646,11 +846,10 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 rhs: Value(rhs),
                 result: Value(id),
             } => {
-                let mode = if operation == Arithmetic::Add {
-                    "PF_ADD"
-                } else {
-                    "PF_SUB"
-                };
+                let mode = operation.c_flags();
+                if matches!(operation, Arithmetic::Increment | Arithmetic::Decrement) {
+                    source.push_str("    state->rflags = (state->rflags & ~UINT64_C(1)) | (pf_read_flags(state) & UINT64_C(1));\n");
+                }
                 let width = width.bits();
                 writeln!(source, "    state->pending = (struct pf_pending){{v{lhs}, v{rhs}, v{id}, {width}, {mode}}};").unwrap();
             }
@@ -853,13 +1052,7 @@ mod tests {
 
     #[test]
     fn rejects_truncated_and_unsupported_encodings() {
-        for bytes in [
-            &[0x48][..],
-            &[0x01],
-            &[0x01, 0x08],
-            &[0x90],
-            &[0xf0, 0x01, 0xc8],
-        ] {
+        for bytes in [&[0x48][..], &[0x01], &[0x01, 0x08], &[0xf0, 0x01, 0xc8]] {
             assert!(lift(bytes).is_err(), "{bytes:02x?}");
         }
     }

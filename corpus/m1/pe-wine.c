@@ -58,7 +58,7 @@ int main(void) {
     struct pf_state state = caller(memory, false);
     struct pf_pe_binding bindings[2];
     assert(pf_pe_import_count == 2);
-    assert(pf_pe_bind_imports(&state, api.exports, 2, FIRST_IMPORT, bindings, 2).status == PF_PE_BIND_OK);
+    assert(pf_pe_bind_imports(&state, api.exports, PF_WINE_EXPORT_COUNT, FIRST_IMPORT, bindings, 2).status == PF_PE_BIND_OK);
 
     uint64_t seed = UINT64_C(0xd1375c4ce8ed13ef);
     uint64_t digest = UINT64_C(14695981039346656037);
