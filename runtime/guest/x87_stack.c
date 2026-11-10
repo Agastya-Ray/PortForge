@@ -31,6 +31,25 @@ static void push(struct pf_x87_state *state, struct pf_ext80 value, uint16_t fla
     set_top(state, slot);
 }
 
+bool pf_x87_load_integer(struct pf_x87_state *state, uint64_t bits, unsigned width) {
+    if (!pf_x87_available(state) || (width != 16 && width != 32 && width != 64)) return false;
+    uint64_t mask = width == 64 ? UINT64_MAX : (UINT64_C(1) << width) - 1;
+    bits &= mask;
+    bool negative = (bits >> (width - 1)) != 0;
+    uint64_t magnitude = negative ? (UINT64_C(0) - bits) & mask : bits;
+    struct pf_ext80 value = {0, 0};
+    if (magnitude) {
+        unsigned power = 63;
+        while (!(magnitude >> 63)) {
+            magnitude <<= 1;
+            --power;
+        }
+        value = (struct pf_ext80){magnitude, (negative ? 0x8000 : 0) | (16383 + power)};
+    }
+    push(state, value, 0);
+    return true;
+}
+
 bool pf_x87_load_real(struct pf_x87_state *state, uint64_t bits, unsigned width) {
     if (!pf_x87_available(state) || (width != 32 && width != 64)) return false;
 

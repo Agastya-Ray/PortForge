@@ -101,6 +101,20 @@ static inline bool pf_load_x87_real(struct pf_state *state, uint64_t address, un
 
 #define PF_ARITHMETIC_FLAGS UINT64_C(0x8d5)
 
+static inline bool pf_load_x87_integer(struct pf_state *state, uint64_t address, unsigned width) {
+    if (!pf_x87_available(&state->x87)) {
+        state->x87_unsupported = true;
+        return false;
+    }
+    uint8_t *bytes;
+    if (!pf_guest_span(state, address, width / 8, 1, false, &bytes)) return false;
+    uint64_t bits = 0;
+    for (unsigned i = 0; i < width / 8; ++i) bits |= (uint64_t)bytes[i] << (8 * i);
+    if (pf_x87_load_integer(&state->x87, bits, width)) return true;
+    state->x87_unsupported = true;
+    return false;
+}
+
 uint64_t pf_read_flags(const struct pf_state *state) {
     const struct pf_pending *flags = &state->pending;
     if (flags->operation == PF_NO_FLAGS) {
