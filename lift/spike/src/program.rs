@@ -184,6 +184,7 @@ fn discover(
     image: &Pe<'_>,
     imports: &Imports<'_>,
     seeds: &[u32],
+    mapped: Option<&[u8]>,
 ) -> Result<BTreeMap<u32, (u32, Step)>, String> {
     let decoder = PeDecoder::new(image);
     let mut pending = BTreeSet::from([image.entry_rva]);
@@ -207,7 +208,11 @@ fn discover(
                 "instruction target overlaps a decoded instruction at RVA {rva:#x}"
             ));
         }
-        let instruction = decoder.decode_at(rva).map_err(|error| error.to_string())?;
+        let instruction = match mapped {
+            Some(bytes) => decoder.decode_mapped_at(rva, bytes),
+            None => decoder.decode_at(rva),
+        }
+        .map_err(|error| error.to_string())?;
         let next = rva + u32::from(instruction.length);
         if let Some((target, _)) = instructions.range(rva..next).next() {
             return Err(format!(
@@ -236,30 +241,50 @@ fn executable(bytes: &[u8]) -> Result<Pe<'_>, String> {
     if !matches!(image.arch, Architecture::X64) || image.is_dll || image.entry_rva == 0 {
         return Err("expected a PE32+ executable with an entry point".into());
     }
-    let base = image.image_base;
-    let last = base.checked_add(u64::from(image.image_size) - 1);
-    if !last.is_some_and(|last| last <= 0x0000_7fff_ffff_ffff || base >= 0xffff_8000_0000_0000) {
-        return Err("preferred PE image range is not canonical".into());
-    }
+    image_base(&image, None)?;
     Ok(image)
 }
 
-pub fn map(bytes: &[u8]) -> Result<Vec<u8>, String> {
+fn image_base(image: &Pe<'_>, requested: Option<u64>) -> Result<u64, String> {
+    let base = requested.unwrap_or(image.image_base);
+    if requested.is_some() && (base == 0 || base % 0x10000 != 0) {
+        return Err("image base must be a nonzero multiple of 0x10000".into());
+    }
+    let last = base.checked_add(u64::from(image.image_size) - 1);
+    if !last.is_some_and(|last| last <= 0x0000_7fff_ffff_ffff || base >= 0xffff_8000_0000_0000) {
+        return Err("PE image range is not canonical".into());
+    }
+    Ok(base)
+}
+
+fn map_at(image: &Pe<'_>, base: u64) -> Result<Vec<u8>, String> {
     const IMAGE_BUDGET: usize = 64 * 1024 * 1024;
-    let image = executable(bytes)?;
     image
-        .map_image(image.image_base, IMAGE_BUDGET)
+        .map_image(base, IMAGE_BUDGET)
         .map_err(|error| error.to_string())
 }
 
-pub fn emit(bytes: &[u8], seeds: &[u32], source: &mut String) -> Result<(), String> {
+pub fn map(bytes: &[u8], requested: Option<u64>) -> Result<Vec<u8>, String> {
     let image = executable(bytes)?;
-    let base = image.image_base;
+    map_at(&image, image_base(&image, requested)?)
+}
+
+pub fn emit(
+    bytes: &[u8],
+    seeds: &[u32],
+    requested: Option<u64>,
+    source: &mut String,
+) -> Result<(), String> {
+    let image = executable(bytes)?;
+    let base = image_base(&image, requested)?;
+    let mapped = (base != image.image_base)
+        .then(|| map_at(&image, base))
+        .transpose()?;
     let imported = image
         .imports()
         .map_err(|error| format!("imports: {error}"))?;
     let imports = import_slots(&image, &imported)?;
-    let instructions = discover(&image, &imports, seeds)?;
+    let instructions = discover(&image, &imports, seeds, mapped.as_deref())?;
     let has_indirect = instructions
         .values()
         .any(|(_, step)| matches!(step, Step::IndirectCall(_)));
