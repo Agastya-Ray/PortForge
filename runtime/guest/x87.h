@@ -52,4 +52,7 @@ bool pf_x87_execute(struct pf_x87_state *state, enum pf_x87_op op,
 /* Push a finite IEEE binary32 or binary64 encoding. False leaves state unchanged. */
 bool pf_x87_load_real(struct pf_x87_state *state, uint64_t bits, unsigned width);
 
+/* Push a signed 16-, 32-, or 64-bit integer exactly. False leaves state unchanged. */
+bool pf_x87_load_integer(struct pf_x87_state *state, uint64_t bits, unsigned width);
+
 #endif

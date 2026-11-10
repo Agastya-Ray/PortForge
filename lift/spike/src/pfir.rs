@@ -202,6 +202,10 @@ pub enum Effect {
         address: Address,
         width: Width,
     },
+    LoadX87Integer {
+        address: Address,
+        width: u16,
+    },
     EffectiveAddress {
         into: Value,
         address: Address,
@@ -308,6 +312,29 @@ fn lift_decoded(
                 _ => return Err(unsupported()),
             }
             effects.push(Effect::AdvanceRip(length));
+            offset += usize::from(length);
+            continue;
+        }
+        if instruction.mnemonic == Mnemonic::FILD {
+            let unsupported = || format!("unsupported FILD operand at offset {offset}");
+            let [operand] = instruction.visible_operands() else {
+                return Err(unsupported());
+            };
+            let DecodedOperandKind::Mem(memory) = &operand.kind else {
+                return Err(unsupported());
+            };
+            if !matches!(operand.size, 16 | 32 | 64) {
+                return Err(unsupported());
+            }
+            let address = Address::for_access(memory, instruction.address_width, length)
+                .ok_or_else(unsupported)?;
+            effects.extend([
+                Effect::LoadX87Integer {
+                    address,
+                    width: operand.size,
+                },
+                Effect::AdvanceRip(length),
+            ]);
             offset += usize::from(length);
             continue;
         }
@@ -933,6 +960,14 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 writeln!(
                     source,
                     "    if (!pf_load_x87_real(state, {expression}, {width})) return;"
+                )
+                .unwrap();
+            }
+            Effect::LoadX87Integer { ref address, width } => {
+                let expression = address.c_expression();
+                writeln!(
+                    source,
+                    "    if (!pf_load_x87_integer(state, {expression}, {width})) return;"
                 )
                 .unwrap();
             }
