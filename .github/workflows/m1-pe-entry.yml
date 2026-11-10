@@ -9,6 +9,8 @@ on:
       - "corpus/m1/check_pe_entry.sh"
       - "corpus/m1/*pe-indirect*"
       - "corpus/m1/check_pe_indirect.sh"
+      - "corpus/m1/*pe-rebase*"
+      - "corpus/m1/check_pe_rebase.sh"
       - "corpus/m1/*pe-import*"
       - "corpus/m1/check_pe_import.sh"
       - "corpus/m1/pe_import_fixture.py"
@@ -35,6 +37,7 @@ jobs:
           bash corpus/m1/check_pe_entry.sh evidence/scalar "" scalar
           bash corpus/m1/check_pe_import.sh evidence/import
           bash corpus/m1/check_pe_indirect.sh evidence/indirect
+          bash corpus/m1/check_pe_rebase.sh evidence/rebase
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pe-entry-x86-reference
@@ -58,6 +61,7 @@ jobs:
           bash corpus/m1/check_pe_entry.sh evidence/scalar reference/scalar scalar
           bash corpus/m1/check_pe_import.sh evidence/import reference/import
           bash corpus/m1/check_pe_indirect.sh evidence/indirect reference/indirect
+          bash corpus/m1/check_pe_rebase.sh evidence/rebase reference/rebase
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pe-entry-arm64

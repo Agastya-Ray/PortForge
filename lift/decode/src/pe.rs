@@ -47,13 +47,28 @@ impl<'pe, 'file> PeDecoder<'pe, 'file> {
 
     /// Decode one instruction from the original PE bytes at a guest RVA.
     pub fn decode_at(&self, rva: u32) -> Result<Instruction, PeDecodeError> {
+        self.decode_bytes(rva, None)
+    }
+
+    /// Decode a mapped image while retaining the file's executable boundaries.
+    pub fn decode_mapped_at(&self, rva: u32, image: &[u8]) -> Result<Instruction, PeDecodeError> {
+        self.decode_bytes(rva, Some(image))
+    }
+
+    fn decode_bytes(&self, rva: u32, mapped: Option<&[u8]>) -> Result<Instruction, PeDecodeError> {
         let mut bytes = [0; zydis::MAX_INSTRUCTION_LENGTH];
         let size = self.image.read_executable(rva, &mut bytes);
         if size == 0 {
             return Err(PeDecodeError::NoExecutableBytes { rva });
         }
+        let bytes = match mapped {
+            Some(image) => image
+                .get(rva as usize..rva as usize + size)
+                .ok_or(PeDecodeError::NoExecutableBytes { rva })?,
+            None => &bytes[..size],
+        };
         self.decoder
-            .decode(&bytes[..size])
+            .decode(bytes)
             .map_err(|error| PeDecodeError::Instruction { rva, error })
     }
 }

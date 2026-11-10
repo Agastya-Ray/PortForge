@@ -14,29 +14,16 @@ fn compile(mut arguments: impl Iterator<Item = String>) -> Result<String, String
     source.push_str(include_str!("guest.h"));
     let Some(first) = arguments.next() else {
         return Err(
-            "usage: pf-ir-spike <hex-block> [<hex-block> ...] | --pe <file> [--seed-rva <0xRVA>]... | --pe-image <file>"
+            "usage: pf-ir-spike <hex-block>... | --pe <file> [--image-base <0xVA>] [--seed-rva <0xRVA>]... | --pe-image <file> [--image-base <0xVA>]"
                 .into(),
         );
     };
     if first == "--pe" {
         let path = arguments.next().ok_or("missing PE path after --pe")?;
-        let mut seeds = Vec::new();
-        while let Some(option) = arguments.next() {
-            if option != "--seed-rva" || seeds.len() == 4096 {
-                return Err("--pe accepts up to 4096 --seed-rva options after the path".into());
-            }
-            let value = arguments.next().ok_or("missing value after --seed-rva")?;
-            let seed = value
-                .strip_prefix("0x")
-                .filter(|digits| digits.bytes().all(|byte| byte.is_ascii_hexdigit()))
-                .and_then(|digits| u32::from_str_radix(digits, 16).ok())
-                .ok_or_else(|| {
-                    format!("invalid --seed-rva {value:?}; expected a hexadecimal RVA")
-                })?;
-            seeds.push(seed);
-        }
+        let (base, seeds) = pe_options(arguments, true)?;
         let bytes = fs::read(&path).map_err(|error| format!("{path}: {error}"))?;
-        program::emit(&bytes, &seeds, &mut source).map_err(|error| format!("{path}: {error}"))?;
+        program::emit(&bytes, &seeds, base, &mut source)
+            .map_err(|error| format!("{path}: {error}"))?;
         return Ok(source);
     }
     let mut count = 0;
@@ -88,9 +75,36 @@ fn main() -> ExitCode {
 
 fn map_image(mut arguments: impl Iterator<Item = String>) -> Result<Vec<u8>, String> {
     let path = arguments.next().ok_or("missing PE path after --pe-image")?;
-    if arguments.next().is_some() {
-        return Err("--pe-image expects exactly one input path".into());
-    }
+    let (base, _) = pe_options(arguments, false)?;
     let bytes = fs::read(&path).map_err(|error| format!("{path}: {error}"))?;
-    program::map(&bytes).map_err(|error| format!("{path}: {error}"))
+    program::map(&bytes, base).map_err(|error| format!("{path}: {error}"))
+}
+
+fn pe_options(
+    mut arguments: impl Iterator<Item = String>,
+    allow_seeds: bool,
+) -> Result<(Option<u64>, Vec<u32>), String> {
+    let mut base = None;
+    let mut seeds = Vec::new();
+    while let Some(option) = arguments.next() {
+        let value = arguments
+            .next()
+            .ok_or_else(|| format!("missing value after {option}"))?;
+        let address = value
+            .strip_prefix("0x")
+            .filter(|digits| digits.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .and_then(|digits| u64::from_str_radix(digits, 16).ok())
+            .ok_or_else(|| format!("invalid {option} {value:?}; expected a hexadecimal address"))?;
+        match option.as_str() {
+            "--image-base" if base.is_none() => base = Some(address),
+            "--seed-rva" if allow_seeds && seeds.len() < 4096 => {
+                seeds.push(
+                    u32::try_from(address)
+                        .map_err(|_| format!("seed RVA out of range: {value}"))?,
+                );
+            }
+            _ => return Err(format!("unexpected or repeated PE option {option}")),
+        }
+    }
+    Ok((base, seeds))
 }
