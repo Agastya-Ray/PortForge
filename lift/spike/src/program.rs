@@ -1,3 +1,4 @@
+use crate::address::Address;
 use crate::pfir::{self, Effect};
 use pf_decode::{DecodedOperandKind, Instruction, Mnemonic, PeDecoder, Register, RegisterClass};
 use pf_detect::pe::{Architecture, Import, Pe, Symbol};
@@ -35,12 +36,17 @@ fn import_slots<'a>(image: &Pe<'_>, imports: &'a [Import]) -> Result<Imports<'a>
     Ok(slots)
 }
 
+enum CallTarget {
+    Register(u8),
+    Memory(Address),
+}
+
 enum Step {
     Lifted(Vec<Effect>),
     Jump(u32),
     Conditional { target: u32, condition: u8 },
     Call(u32),
-    RegisterCall(u8),
+    IndirectCall(CallTarget),
     ImportCall { slot: u32, returns: bool },
     Return,
 }
@@ -78,7 +84,7 @@ impl Step {
         };
         if let DecodedOperandKind::Reg(register) = operand.kind {
             if mnemonic == Mnemonic::CALL && register.class() == RegisterClass::GPR64 {
-                return Ok(Self::RegisterCall(register.id()));
+                return Ok(Self::IndirectCall(CallTarget::Register(register.id())));
             }
         }
         if let DecodedOperandKind::Mem(memory) = &operand.kind {
@@ -101,6 +107,12 @@ impl Step {
                     returns: !import_exits(dll, symbol),
                 });
             }
+            if mnemonic == Mnemonic::CALL && operand.size == 64 {
+                let address =
+                    Address::for_access(memory, instruction.address_width, instruction.length)
+                        .ok_or("unsupported memory-indirect CALL address")?;
+                return Ok(Self::IndirectCall(CallTarget::Memory(address)));
+            }
         }
         if !matches!(&operand.kind, DecodedOperandKind::Imm(immediate) if immediate.is_relative) {
             return Err(format!("unsupported nonrelative {mnemonic:?} target"));
@@ -122,7 +134,7 @@ impl Step {
 
     fn add_successors(&self, next: u32, pending: &mut BTreeSet<u32>) {
         match *self {
-            Self::Lifted(_) | Self::RegisterCall(_) | Self::ImportCall { returns: true, .. } => {
+            Self::Lifted(_) | Self::IndirectCall(_) | Self::ImportCall { returns: true, .. } => {
                 pending.insert(next);
             }
             Self::Jump(target) => {
@@ -161,16 +173,21 @@ impl Step {
                 .unwrap();
             }
             Self::Return => writeln!(source, "    pf_pe_return(state);").unwrap(),
-            Self::ImportCall { .. } | Self::RegisterCall(_) => {
-                unreachable!("import calls need host bindings")
+            Self::ImportCall { .. } | Self::IndirectCall(_) => {
+                unreachable!("dynamic calls are emitted in the dispatcher")
             }
         }
     }
 }
 
-fn discover(image: &Pe<'_>, imports: &Imports<'_>) -> Result<BTreeMap<u32, (u32, Step)>, String> {
+fn discover(
+    image: &Pe<'_>,
+    imports: &Imports<'_>,
+    seeds: &[u32],
+) -> Result<BTreeMap<u32, (u32, Step)>, String> {
     let decoder = PeDecoder::new(image);
     let mut pending = BTreeSet::from([image.entry_rva]);
+    pending.extend(seeds.iter().copied());
     let mut instructions = BTreeMap::new();
     while let Some(rva) = pending.pop_first() {
         if instructions.contains_key(&rva) {
@@ -235,18 +252,18 @@ pub fn map(bytes: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|error| error.to_string())
 }
 
-pub fn emit(bytes: &[u8], source: &mut String) -> Result<(), String> {
+pub fn emit(bytes: &[u8], seeds: &[u32], source: &mut String) -> Result<(), String> {
     let image = executable(bytes)?;
     let base = image.image_base;
     let imported = image
         .imports()
         .map_err(|error| format!("imports: {error}"))?;
     let imports = import_slots(&image, &imported)?;
-    let instructions = discover(&image, &imports)?;
-    let used_slots: BTreeSet<_> = if instructions
+    let instructions = discover(&image, &imports, seeds)?;
+    let has_indirect = instructions
         .values()
-        .any(|(_, step)| matches!(step, Step::RegisterCall(_)))
-    {
+        .any(|(_, step)| matches!(step, Step::IndirectCall(_)));
+    let used_slots: BTreeSet<_> = if has_indirect {
         imports.keys().copied().collect()
     } else {
         instructions
@@ -302,7 +319,7 @@ pub fn emit(bytes: &[u8], source: &mut String) -> Result<(), String> {
     }
     source.push_str("};\n");
     for (rva, (next, step)) in &instructions {
-        if matches!(step, Step::ImportCall { .. } | Step::RegisterCall(_)) {
+        if matches!(step, Step::ImportCall { .. } | Step::IndirectCall(_)) {
             continue;
         }
         writeln!(
@@ -312,6 +329,16 @@ pub fn emit(bytes: &[u8], source: &mut String) -> Result<(), String> {
         .unwrap();
         step.emit(*next, base, source);
         writeln!(source, "}}").unwrap();
+    }
+    if has_indirect {
+        source.push_str(
+            "static bool pf_pe_has_instruction(uint64_t target) {\n    switch (target) {\n",
+        );
+        for rva in instructions.keys() {
+            let pc = base + u64::from(*rva);
+            writeln!(source, "    case UINT64_C({pc:#x}):").unwrap();
+        }
+        source.push_str("        return true;\n    default: return false;\n    }\n}\n");
     }
     source.push_str(
         r#"
@@ -339,9 +366,24 @@ enum pf_pe_status pf_pe_run_bound(struct pf_state *state, uint64_t stop_rip, siz
                 writeln!(source, "            const struct pf_pe_binding *binding = bindings && binding_count > {index} ? &bindings[{index}] : NULL;").unwrap();
                 writeln!(source, "            enum pf_pe_status status = pf_pe_import_call(state, pf_pe_imports[{index}].slot, binding, UINT64_C({return_rip:#x}));").unwrap();
             }
-            Step::RegisterCall(register) => {
+            Step::IndirectCall(target) => {
                 writeln!(source, "        case UINT64_C({pc:#x}): {{").unwrap();
-                writeln!(source, "            enum pf_pe_status status = pf_pe_register_call(state, state->gpr[{register}], bindings, binding_count, UINT64_C({return_rip:#x}));").unwrap();
+                match target {
+                    CallTarget::Register(register) => writeln!(
+                        source,
+                        "            uint64_t target = state->gpr[{register}];"
+                    )
+                    .unwrap(),
+                    CallTarget::Memory(address) => {
+                        let address = address.c_expression();
+                        source.push_str("            uint8_t *pointer;\n");
+                        writeln!(source, "            if (!pf_guest_span(state, {address}, 8, 1, false, &pointer)) return PF_PE_MEMORY_FAULT;").unwrap();
+                        source.push_str("            uint64_t target = pf_read_le64(pointer);\n");
+                    }
+                }
+                writeln!(source, "            if (pf_pe_has_instruction(target)) {{ pf_pe_call(state, target, UINT64_C({return_rip:#x})); break; }}").unwrap();
+                source.push_str("            if (target >= PF_PE_IMAGE_BASE && target - PF_PE_IMAGE_BASE < PF_PE_IMAGE_SIZE) return PF_PE_UNKNOWN_RIP;\n");
+                writeln!(source, "            enum pf_pe_status status = pf_pe_register_call(state, target, bindings, binding_count, UINT64_C({return_rip:#x}));").unwrap();
             }
             _ => {
                 writeln!(
