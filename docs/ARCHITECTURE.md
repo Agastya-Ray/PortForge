@@ -33,11 +33,22 @@ the evidence and repeated release executable hashes.
 
 The loader maps headers and section data into a caller-budgeted guest image.
 It fills virtual tails with zeros and applies x86 or x64 base relocations when
-the caller selects a different base. Import binding and execution belong to
-later milestones. Import tables, strings, and relocation directories can span
+the caller selects a different base. M1 binds eager imports for its executable
+fixtures at their preferred base. Import tables, strings, and relocation directories can span
 adjacent file-backed RVA regions. Reads reject gaps in the mapped file.
 
 The CLI corpus verifies 20 generated files. A separate check compares packed and
 unpacked Windows launchers with GNU objdump. It extracts sample files from a
 hash-pinned distlib wheel and packs disposable copies. PortForge itself has no packer
 dependency.
+
+## M1 console execution
+
+The experimental `pf-ir-spike --pe` command emits C for reachable PE32+
+instructions. `pf-ir-spike --pe-image` provides the mapped image to the
+[Wine console runner](adr/011-console-programs.md). It validates guest
+buffers before calling Wine and checks a bounded number of instructions.
+CI compares output and exit status from compiler-built console programs on
+native x86-64 and translated ARM64. This covers a narrow set of kernel32
+exports. The full program corpus and the production translator decision
+remain M1 acceptance work.

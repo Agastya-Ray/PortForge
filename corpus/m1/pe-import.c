@@ -55,11 +55,11 @@ static uint64_t pointers_by_ordinal(void *context, uint64_t a, uint64_t b, uint6
 static const struct pf_pe_export pointer_exports[] = {
     {
         .dll = "fixture.dll", .name = "MixFour", .invoke = pointers_by_name,
-        .args = {{8, true}, {8, false}, {0}, {8, true}},
+        .args = {{.size = 8, .writable = true}, {.size = 8}, {0}, {.size = 8, .writable = true}},
     },
     {
         .dll = "fixture.dll", .ordinal = 17, .invoke = pointers_by_ordinal,
-        .args = {{8, true}, {8, false}, {0}, {8, true}},
+        .args = {{.size = 8, .writable = true}, {.size = 8}, {0}, {.size = 8, .writable = true}},
     },
 };
 

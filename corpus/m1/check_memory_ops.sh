@@ -5,7 +5,7 @@ suite=${1:?usage: check_memory_ops.sh <suite> [softfloat-directory]}
 extra=()
 case "$suite" in
     lea|sse2-memory|xmm-moves) ;;
-    scalar)
+    scalar|console-ops)
         if [[ $(uname -m) == x86_64 ]]; then extra=(-mno-red-zone); fi
         ;;
     x87-memory)

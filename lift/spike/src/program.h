@@ -9,6 +9,9 @@ enum pf_pe_status {
     PF_PE_MEMORY_FAULT,
     PF_PE_X87_UNSUPPORTED,
     PF_PE_UNBOUND_IMPORT,
+    PF_PE_UNSUPPORTED_IMPORT,
+    PF_PE_EXITED,
+    PF_PE_CONTINUE,
 };
 
 struct pf_pe_import {
@@ -16,6 +19,7 @@ struct pf_pe_import {
     const char *dll;
     const char *name;
     uint16_t ordinal;
+    bool exits;
 };
 
 typedef uint64_t (*pf_pe_host_fn)(void *, uint64_t, uint64_t, uint64_t, uint64_t);
@@ -23,6 +27,7 @@ typedef uint64_t (*pf_pe_host_fn)(void *, uint64_t, uint64_t, uint64_t, uint64_t
 struct pf_pe_guest_arg {
     size_t size;
     bool writable;
+    unsigned size_arg; /* One-based argument containing a Win32 DWORD length. */
 };
 
 struct pf_pe_binding {
@@ -30,6 +35,8 @@ struct pf_pe_binding {
     pf_pe_host_fn invoke;
     void *context;
     struct pf_pe_guest_arg args[4];
+    bool null_fifth;
+    bool exits;
 };
 
 struct pf_pe_export {
@@ -39,6 +46,8 @@ struct pf_pe_export {
     pf_pe_host_fn invoke;
     void *context;
     struct pf_pe_guest_arg args[4];
+    bool null_fifth;
+    bool exits;
 };
 
 enum pf_pe_bind_status {
@@ -102,6 +111,12 @@ struct pf_pe_bind_result pf_pe_bind_imports(struct pf_state *state, const struct
         if (!exports[i].dll || !exports[i].invoke) {
             return (struct pf_pe_bind_result){PF_PE_BIND_INVALID, SIZE_MAX, PF_MEM_OK};
         }
+        for (size_t j = 0; j < 4; ++j) {
+            struct pf_pe_guest_arg arg = exports[i].args[j];
+            if (arg.size_arg > 4 || (arg.size_arg && arg.size)) {
+                return (struct pf_pe_bind_result){PF_PE_BIND_INVALID, SIZE_MAX, PF_MEM_OK};
+            }
+        }
     }
     if (!pf_pe_token_range(&state->memory, first_target, count)) {
         return (struct pf_pe_bind_result){PF_PE_BIND_TARGET_RANGE, SIZE_MAX, PF_MEM_OK};
@@ -127,6 +142,10 @@ struct pf_pe_bind_result pf_pe_bind_imports(struct pf_state *state, const struct
             result = (struct pf_pe_bind_result){PF_PE_BIND_UNRESOLVED, i, PF_MEM_OK};
             goto done;
         }
+        if (pf_pe_imports[i].exits && !match->exits) {
+            result = (struct pf_pe_bind_result){PF_PE_BIND_INVALID, i, PF_MEM_OK};
+            goto done;
+        }
         enum pf_memory_fault fault = pf_memory_span(
             &state->memory, pf_pe_imports[i].slot, 8, 1, true, &staged[i].slot
         );
@@ -136,7 +155,7 @@ struct pf_pe_bind_result pf_pe_bind_imports(struct pf_state *state, const struct
         }
         staged[i].binding = (struct pf_pe_binding){
             .target = first_target + i * UINT64_C(8), .invoke = match->invoke,
-            .context = match->context,
+            .context = match->context, .null_fifth = match->null_fifth, .exits = match->exits,
         };
         memcpy(staged[i].binding.args, match->args, sizeof(staged[i].binding.args));
     }
@@ -150,12 +169,7 @@ done:
 }
 
 static inline void pf_pe_call(struct pf_state *state, uint64_t target, uint64_t return_rip) {
-    uint64_t rsp = state->gpr[4] - 8;
-    uint8_t *bytes;
-    if (!pf_guest_span(state, rsp, 8, 1, true, &bytes)) return;
-    pf_write_le64(bytes, return_rip);
-    state->gpr[4] = rsp;
-    state->rip = target;
+    if (pf_push(state, return_rip)) state->rip = target;
 }
 
 static inline bool pf_pe_check_target(struct pf_state *state, uint64_t target) {
@@ -174,28 +188,61 @@ static inline void pf_pe_return(struct pf_state *state) {
     state->rip = target;
 }
 
-static inline bool pf_pe_import_call(struct pf_state *state, uint64_t slot,
-                                     const struct pf_pe_binding *binding, uint64_t return_rip) {
+static inline enum pf_pe_status pf_pe_invoke(struct pf_state *state, uint64_t target,
+                                              const struct pf_pe_binding *binding, uint64_t return_rip) {
     uint8_t *bytes;
-    if (!pf_guest_span(state, slot, 8, 1, false, &bytes)) return false;
-    uint64_t target = pf_read_le64(bytes);
-    if (!pf_pe_check_target(state, target)) return false;
-    if (!target || !binding || !binding->invoke || binding->target != target) return false;
+    if (!target || !binding || !binding->invoke || binding->target != target) return PF_PE_UNBOUND_IMPORT;
+    if (binding->null_fifth) {
+        /* The fifth argument follows the 32-byte register home area before CALL. */
+        if (!pf_guest_span(state, state->gpr[4] + 32, 8, 1, false, &bytes)) return PF_PE_MEMORY_FAULT;
+        if (pf_read_le64(bytes)) return PF_PE_UNSUPPORTED_IMPORT;
+    }
     uint64_t args[] = {state->gpr[1], state->gpr[2], state->gpr[8], state->gpr[9]};
+    uint64_t host_args[4];
     for (size_t i = 0; i < 4; ++i) {
         struct pf_pe_guest_arg arg = binding->args[i];
-        if (!arg.size) continue;
+        if (arg.size_arg > 4) return PF_PE_UNSUPPORTED_IMPORT;
+        size_t width = arg.size_arg ? (uint32_t)args[arg.size_arg - 1] : arg.size;
+        if (!width) {
+            host_args[i] = arg.size_arg ? 0 : args[i];
+            continue;
+        }
         if (!args[i]) {
             state->memory_fault = PF_MEM_UNMAPPED;
             state->fault_address = 0;
-            return false;
+            return PF_PE_MEMORY_FAULT;
         }
-        if (!pf_guest_span(state, args[i], arg.size, 1, arg.writable, &bytes)) return false;
-        args[i] = (uintptr_t)bytes;
+        if (!pf_guest_span(state, args[i], width, 1, arg.writable, &bytes)) return PF_PE_MEMORY_FAULT;
+        host_args[i] = (uintptr_t)bytes;
     }
     pf_pe_call(state, target, return_rip);
-    if (state->memory_fault != PF_MEM_OK) return false;
-    state->gpr[0] = binding->invoke(binding->context, args[0], args[1], args[2], args[3]);
+    if (state->memory_fault != PF_MEM_OK) return PF_PE_MEMORY_FAULT;
+    uint64_t result = binding->invoke(binding->context, host_args[0], host_args[1], host_args[2], host_args[3]);
+    if (binding->exits) {
+        state->pe_exited = true;
+        state->pe_exit_code = (uint32_t)result;
+        return PF_PE_EXITED;
+    }
+    state->gpr[0] = result;
     pf_pe_return(state);
-    return state->memory_fault == PF_MEM_OK;
+    return state->memory_fault == PF_MEM_OK ? PF_PE_CONTINUE : PF_PE_MEMORY_FAULT;
+}
+
+static inline enum pf_pe_status pf_pe_import_call(struct pf_state *state, uint64_t slot,
+                                                  const struct pf_pe_binding *binding, uint64_t return_rip) {
+    uint8_t *bytes;
+    if (!pf_guest_span(state, slot, 8, 1, false, &bytes)) return PF_PE_MEMORY_FAULT;
+    uint64_t target = pf_read_le64(bytes);
+    if (!pf_pe_check_target(state, target)) return PF_PE_MEMORY_FAULT;
+    return pf_pe_invoke(state, target, binding, return_rip);
+}
+
+static inline enum pf_pe_status pf_pe_register_call(struct pf_state *state, uint64_t target,
+                                                    const struct pf_pe_binding *bindings,
+                                                    size_t count, uint64_t return_rip) {
+    if (!pf_pe_check_target(state, target)) return PF_PE_MEMORY_FAULT;
+    for (size_t i = 0; bindings && i < count && i < pf_pe_import_count; ++i) {
+        if (bindings[i].target == target) return pf_pe_invoke(state, target, &bindings[i], return_rip);
+    }
+    return PF_PE_UNBOUND_IMPORT;
 }

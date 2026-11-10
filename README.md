@@ -23,6 +23,13 @@ To run the lifter experiment after fetching the locked sources:
 ```sh
 bash corpus/m1/check_arithmetic.sh ./evidence
 bash corpus/m1/check_pe_entry.sh ./evidence/pe-entry  # x86-64 Linux
+bash corpus/m1/check_pe_console.sh ./evidence/console  # x86-64 Linux with Wine, Clang and LLD
 ```
+
+The console check builds Windows executables, translates them, and compares
+their raw output and exit status against a native x86-64 run under Wine.
+The ARM64 CI job translates the same executables and compares against those
+reference files. See [console execution](docs/adr/011-console-programs.md) for
+the supported Wine calls and the runner's limits.
 
 See [Architecture](docs/ARCHITECTURE.md) for the file interface and milestone status.

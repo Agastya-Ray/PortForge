@@ -3,6 +3,7 @@ mod pfir;
 mod program;
 
 use std::fmt::Write;
+use std::io::{self, Write as _};
 use std::{env, fs, process::ExitCode};
 
 fn compile(mut arguments: impl Iterator<Item = String>) -> Result<String, String> {
@@ -12,7 +13,10 @@ fn compile(mut arguments: impl Iterator<Item = String>) -> Result<String, String
     source.push('\n');
     source.push_str(include_str!("guest.h"));
     let Some(first) = arguments.next() else {
-        return Err("usage: pf-ir-spike <hex-block> [<hex-block> ...] | --pe <file>".into());
+        return Err(
+            "usage: pf-ir-spike <hex-block> [<hex-block> ...] | --pe <file> | --pe-image <file>"
+                .into(),
+        );
     };
     if first == "--pe" {
         let path = arguments.next().ok_or("missing PE path after --pe")?;
@@ -46,14 +50,35 @@ fn compile(mut arguments: impl Iterator<Item = String>) -> Result<String, String
 }
 
 fn main() -> ExitCode {
-    match compile(env::args().skip(1)) {
-        Ok(source) => {
-            print!("{source}");
-            ExitCode::SUCCESS
-        }
+    let mut arguments = env::args().skip(1).peekable();
+    let output = if arguments
+        .peek()
+        .is_some_and(|option| option == "--pe-image")
+    {
+        arguments.next();
+        map_image(arguments)
+    } else {
+        compile(arguments).map(String::into_bytes)
+    };
+    match output.and_then(|bytes| {
+        io::stdout()
+            .lock()
+            .write_all(&bytes)
+            .map_err(|error| error.to_string())
+    }) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("pf-ir-spike: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn map_image(mut arguments: impl Iterator<Item = String>) -> Result<Vec<u8>, String> {
+    let path = arguments.next().ok_or("missing PE path after --pe-image")?;
+    if arguments.next().is_some() {
+        return Err("--pe-image expects exactly one input path".into());
+    }
+    let bytes = fs::read(&path).map_err(|error| format!("{path}: {error}"))?;
+    program::map(&bytes).map_err(|error| format!("{path}: {error}"))
 }

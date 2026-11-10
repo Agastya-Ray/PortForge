@@ -1,5 +1,5 @@
 use crate::pfir::{self, Effect};
-use pf_decode::{DecodedOperandKind, Instruction, Mnemonic, PeDecoder, Register};
+use pf_decode::{DecodedOperandKind, Instruction, Mnemonic, PeDecoder, Register, RegisterClass};
 use pf_detect::pe::{Architecture, Import, Pe, Symbol};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -7,6 +7,11 @@ use std::fmt::Write;
 const MAX_INSTRUCTIONS: usize = 4096;
 
 type Imports<'a> = BTreeMap<u32, (&'a str, &'a Symbol)>;
+
+fn import_exits(dll: &str, symbol: &Symbol) -> bool {
+    dll.eq_ignore_ascii_case("kernel32.dll")
+        && matches!(symbol, Symbol::Name(name) if name == "ExitProcess")
+}
 
 fn import_slots<'a>(image: &Pe<'_>, imports: &'a [Import]) -> Result<Imports<'a>, String> {
     let mut slots = BTreeMap::new();
@@ -33,9 +38,10 @@ fn import_slots<'a>(image: &Pe<'_>, imports: &'a [Import]) -> Result<Imports<'a>
 enum Step {
     Lifted(Vec<Effect>),
     Jump(u32),
-    Conditional { target: u32, zero: bool },
+    Conditional { target: u32, condition: u8 },
     Call(u32),
-    ImportCall(u32),
+    RegisterCall(u8),
+    ImportCall { slot: u32, returns: bool },
     Return,
 }
 
@@ -47,12 +53,34 @@ impl Step {
                 return Ok(Self::Return);
             }
             Mnemonic::RET => return Err("only unprefixed near RET is supported".into()),
-            Mnemonic::JMP | Mnemonic::JZ | Mnemonic::JNZ | Mnemonic::CALL => {}
+            Mnemonic::JMP
+            | Mnemonic::CALL
+            | Mnemonic::JO
+            | Mnemonic::JNO
+            | Mnemonic::JB
+            | Mnemonic::JNB
+            | Mnemonic::JZ
+            | Mnemonic::JNZ
+            | Mnemonic::JBE
+            | Mnemonic::JNBE
+            | Mnemonic::JS
+            | Mnemonic::JNS
+            | Mnemonic::JP
+            | Mnemonic::JNP
+            | Mnemonic::JL
+            | Mnemonic::JNL
+            | Mnemonic::JLE
+            | Mnemonic::JNLE => {}
             _ => return pfir::lift_instruction(instruction).map(Self::Lifted),
         }
         let [operand] = instruction.visible_operands() else {
             return Err(format!("unsupported {mnemonic:?} operands"));
         };
+        if let DecodedOperandKind::Reg(register) = operand.kind {
+            if mnemonic == Mnemonic::CALL && register.class() == RegisterClass::GPR64 {
+                return Ok(Self::RegisterCall(register.id()));
+            }
+        }
         if let DecodedOperandKind::Mem(memory) = &operand.kind {
             if mnemonic == Mnemonic::CALL
                 && operand.size == 64
@@ -65,12 +93,13 @@ impl Step {
                     .ok()
                     .and_then(|address| u32::try_from(address).ok())
                     .ok_or("RIP-relative CALL slot falls outside the image RVA range")?;
-                return imports
-                    .contains_key(&slot)
-                    .then_some(Self::ImportCall(slot))
-                    .ok_or_else(|| {
-                        format!("RIP-relative CALL slot RVA {slot:#x} is not an eager import")
-                    });
+                let (dll, symbol) = imports.get(&slot).ok_or_else(|| {
+                    format!("RIP-relative CALL slot RVA {slot:#x} is not an eager import")
+                })?;
+                return Ok(Self::ImportCall {
+                    slot,
+                    returns: !import_exits(dll, symbol),
+                });
             }
         }
         if !matches!(&operand.kind, DecodedOperandKind::Imm(immediate) if immediate.is_relative) {
@@ -86,14 +115,14 @@ impl Step {
             Mnemonic::CALL => Self::Call(target),
             _ => Self::Conditional {
                 target,
-                zero: mnemonic == Mnemonic::JZ,
+                condition: instruction.opcode & 15,
             },
         })
     }
 
     fn add_successors(&self, next: u32, pending: &mut BTreeSet<u32>) {
         match *self {
-            Self::Lifted(_) | Self::ImportCall(_) => {
+            Self::Lifted(_) | Self::RegisterCall(_) | Self::ImportCall { returns: true, .. } => {
                 pending.insert(next);
             }
             Self::Jump(target) => {
@@ -102,7 +131,7 @@ impl Step {
             Self::Conditional { target, .. } | Self::Call(target) => {
                 pending.extend([next, target]);
             }
-            Self::Return => {}
+            Self::Return | Self::ImportCall { returns: false, .. } => {}
         }
     }
 
@@ -113,13 +142,14 @@ impl Step {
             Self::Jump(target) => {
                 writeln!(source, "    state->rip = {};", address(target)).unwrap()
             }
-            Self::Conditional { target, zero } => {
-                let compare = if zero { "!=" } else { "==" };
+            Self::Conditional { target, condition } => {
                 writeln!(
                     source,
-                    "    state->rip = (pf_read_flags(state) & UINT64_C(0x40)) {compare} 0 ? {} : {};",
-                    address(target), address(next)
-                ).unwrap();
+                    "    state->rip = pf_condition(pf_read_flags(state), {condition}) ? {} : {};",
+                    address(target),
+                    address(next)
+                )
+                .unwrap();
             }
             Self::Call(target) => {
                 writeln!(
@@ -131,7 +161,9 @@ impl Step {
                 .unwrap();
             }
             Self::Return => writeln!(source, "    pf_pe_return(state);").unwrap(),
-            Self::ImportCall(_) => unreachable!("import calls need host bindings"),
+            Self::ImportCall { .. } | Self::RegisterCall(_) => {
+                unreachable!("import calls need host bindings")
+            }
         }
     }
 }
@@ -182,7 +214,7 @@ fn c_string(value: &str) -> String {
     literal
 }
 
-pub fn emit(bytes: &[u8], source: &mut String) -> Result<(), String> {
+fn executable(bytes: &[u8]) -> Result<Pe<'_>, String> {
     let image = Pe::parse(bytes).map_err(|error| error.to_string())?;
     if !matches!(image.arch, Architecture::X64) || image.is_dll || image.entry_rva == 0 {
         return Err("expected a PE32+ executable with an entry point".into());
@@ -192,24 +224,47 @@ pub fn emit(bytes: &[u8], source: &mut String) -> Result<(), String> {
     if !last.is_some_and(|last| last <= 0x0000_7fff_ffff_ffff || base >= 0xffff_8000_0000_0000) {
         return Err("preferred PE image range is not canonical".into());
     }
+    Ok(image)
+}
+
+pub fn map(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    const IMAGE_BUDGET: usize = 64 * 1024 * 1024;
+    let image = executable(bytes)?;
+    image
+        .map_image(image.image_base, IMAGE_BUDGET)
+        .map_err(|error| error.to_string())
+}
+
+pub fn emit(bytes: &[u8], source: &mut String) -> Result<(), String> {
+    let image = executable(bytes)?;
+    let base = image.image_base;
     let imported = image
         .imports()
         .map_err(|error| format!("imports: {error}"))?;
     let imports = import_slots(&image, &imported)?;
     let instructions = discover(&image, &imports)?;
-    let used_slots: BTreeSet<_> = instructions
+    let used_slots: BTreeSet<_> = if instructions
         .values()
-        .filter_map(|(_, step)| match step {
-            Step::ImportCall(slot) => Some(*slot),
-            _ => None,
-        })
-        .collect();
+        .any(|(_, step)| matches!(step, Step::RegisterCall(_)))
+    {
+        imports.keys().copied().collect()
+    } else {
+        instructions
+            .values()
+            .filter_map(|(_, step)| match step {
+                Step::ImportCall { slot, .. } => Some(*slot),
+                _ => None,
+            })
+            .collect()
+    };
     let indices: BTreeMap<_, _> = used_slots
         .into_iter()
         .enumerate()
         .map(|(index, slot)| (slot, index))
         .collect();
     source.push_str(include_str!("program.h"));
+    writeln!(source, "#define PF_PE_IMAGE_BASE UINT64_C({base:#x})").unwrap();
+    writeln!(source, "#define PF_PE_IMAGE_SIZE {}u", image.image_size).unwrap();
     writeln!(
         source,
         "#define PF_PE_ENTRY UINT64_C({:#x})",
@@ -228,13 +283,18 @@ pub fn emit(bytes: &[u8], source: &mut String) -> Result<(), String> {
     }
     for slot in indices.keys() {
         let (dll, symbol) = imports[slot];
+        let exits = if import_exits(dll, symbol) {
+            "true"
+        } else {
+            "false"
+        };
         let (name, ordinal) = match symbol {
             Symbol::Name(name) => (c_string(name), 0),
             Symbol::Ordinal(ordinal) => ("NULL".into(), *ordinal),
         };
         writeln!(
             source,
-            "    {{UINT64_C({:#x}), {}, {name}, {ordinal}}},",
+            "    {{UINT64_C({:#x}), {}, {name}, {ordinal}, {exits}}},",
             base + u64::from(*slot),
             c_string(dll)
         )
@@ -242,7 +302,7 @@ pub fn emit(bytes: &[u8], source: &mut String) -> Result<(), String> {
     }
     source.push_str("};\n");
     for (rva, (next, step)) in &instructions {
-        if matches!(step, Step::ImportCall(_)) {
+        if matches!(step, Step::ImportCall { .. } | Step::RegisterCall(_)) {
             continue;
         }
         writeln!(
@@ -262,6 +322,7 @@ enum pf_pe_status pf_pe_run_bound(struct pf_state *state, uint64_t stop_rip, siz
     for (;;) {
         if (state->memory_fault != PF_MEM_OK) return PF_PE_MEMORY_FAULT;
         if (state->x87_unsupported) return PF_PE_X87_UNSUPPORTED;
+        if (state->pe_exited) return PF_PE_EXITED;
         if (state->rip == stop_rip) return PF_PE_RETURNED;
         if (!fuel) return PF_PE_BUDGET;
         --fuel;
@@ -270,20 +331,28 @@ enum pf_pe_status pf_pe_run_bound(struct pf_state *state, uint64_t stop_rip, siz
     );
     for (rva, (next, step)) in &instructions {
         let pc = base + u64::from(*rva);
-        if let Step::ImportCall(slot) = step {
-            let index = indices[slot];
-            let return_rip = base + u64::from(*next);
-            writeln!(source, "        case UINT64_C({pc:#x}): {{").unwrap();
-            writeln!(source, "            const struct pf_pe_binding *binding = bindings && binding_count > {index} ? &bindings[{index}] : NULL;").unwrap();
-            writeln!(source, "            if (!pf_pe_import_call(state, pf_pe_imports[{index}].slot, binding, UINT64_C({return_rip:#x})))").unwrap();
-            source.push_str("                return state->memory_fault == PF_MEM_OK ? PF_PE_UNBOUND_IMPORT : PF_PE_MEMORY_FAULT;\n            break;\n        }\n");
-        } else {
-            writeln!(
-                source,
-                "        case UINT64_C({pc:#x}): pf_pe_{rva:x}(state); break;"
-            )
-            .unwrap();
+        let return_rip = base + u64::from(*next);
+        match step {
+            Step::ImportCall { slot, .. } => {
+                let index = indices[slot];
+                writeln!(source, "        case UINT64_C({pc:#x}): {{").unwrap();
+                writeln!(source, "            const struct pf_pe_binding *binding = bindings && binding_count > {index} ? &bindings[{index}] : NULL;").unwrap();
+                writeln!(source, "            enum pf_pe_status status = pf_pe_import_call(state, pf_pe_imports[{index}].slot, binding, UINT64_C({return_rip:#x}));").unwrap();
+            }
+            Step::RegisterCall(register) => {
+                writeln!(source, "        case UINT64_C({pc:#x}): {{").unwrap();
+                writeln!(source, "            enum pf_pe_status status = pf_pe_register_call(state, state->gpr[{register}], bindings, binding_count, UINT64_C({return_rip:#x}));").unwrap();
+            }
+            _ => {
+                writeln!(
+                    source,
+                    "        case UINT64_C({pc:#x}): pf_pe_{rva:x}(state); break;"
+                )
+                .unwrap();
+                continue;
+            }
         }
+        source.push_str("            if (status != PF_PE_CONTINUE) return status;\n            break;\n        }\n");
     }
     source.push_str("        default: return PF_PE_UNKNOWN_RIP;\n        }\n    }\n}\n");
     source.push_str(
