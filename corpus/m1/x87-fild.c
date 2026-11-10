@@ -53,9 +53,9 @@ int main(void) {
 #if defined(__x86_64__)
             __asm__ volatile("fninit; fldcw %0" : : "m"(control));
             for (unsigned j = 0; j < depth; ++j) __asm__ volatile("fld1" : : : "st");
-            if (width == 16) __asm__ volatile("filds (%0)" : : "r"(memory + 1) : "st");
-            else if (width == 32) __asm__ volatile("fildl (%0)" : : "r"(memory + 1) : "st");
-            else __asm__ volatile("fildq (%0)" : : "r"(memory + 1) : "st");
+            if (width == 16) __asm__ volatile("filds (%0)" : : "r"(memory + 1) : "st", "memory");
+            else if (width == 32) __asm__ volatile("fildl (%0)" : : "r"(memory + 1) : "st", "memory");
+            else __asm__ volatile("fildq (%0)" : : "r"(memory + 1) : "st", "memory");
             _Alignas(16) uint8_t snapshot[512];
             __asm__ volatile("fxsave %0; fninit" : "=m"(snapshot));
             uint16_t status = snapshot[2] | ((uint16_t)snapshot[3] << 8);
