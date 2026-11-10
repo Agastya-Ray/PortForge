@@ -35,10 +35,10 @@ if ! timeout 120 "$loader" wineboot.exe --init > "$tmp/wineboot.log" 2>&1; then
 fi
 
 run() {
-    local output=$1 status=0
-    shift
+    local input=$1 output=$2 status=0
+    shift 2
     mkdir -p "$output"
-    timeout 120 "$loader" "$@" > "$output/stdout.bin" 2> "$output/stderr.bin" || status=$?
+    timeout 120 "$loader" "$@" < "$input" > "$output/stdout.bin" 2> "$output/stderr.bin" || status=$?
     printf '%s\n' "$status" > "$output/exit.txt"
 }
 
@@ -82,24 +82,27 @@ compare_result() {
     done
 }
 
-for name in text count streams calls; do
+for name in text count streams calls input; do
     work="$evidence/$name"
     mkdir -p "$work"
+    python3 corpus/m1/check_pe_console_output.py "$name" "$work" --prepare-input
     if [[ $arch == x86_64 ]]; then
         if [[ $compiler == msvc ]]; then
             cp "$reference/$name/guest.exe" "$work/guest.exe"
+            cmp "$work/stdin.bin" "$reference/$name/stdin.bin"
         else
             build_guest "corpus/m1/pe-console-$name.c" "$work/guest.exe"
             build_guest "corpus/m1/pe-console-$name.c" "$tmp/repeated.exe"
             cmp "$work/guest.exe" "$tmp/repeated.exe"
         fi
-        run "$work/native" "$work/guest.exe"
+        run "$work/stdin.bin" "$work/native" "$work/guest.exe"
         oracle="$work/native"
         if [[ $compiler == msvc ]]; then
             compare_result "$oracle" "$reference/$name/native"
         fi
     else
         cp "$reference/$name/guest.exe" "$work/guest.exe"
+        cmp "$work/stdin.bin" "$reference/$name/stdin.bin"
         oracle="$reference/$name/native"
     fi
 
@@ -120,7 +123,7 @@ for name in text count streams calls; do
     fi
     "$winegcc" "${target[@]}" -std=gnu11 -O2 -Wall -Wextra -Werror -I"$work" \
         runtime/host/wine_console.c -o "$tmp/check.exe"
-    run "$work/translated" "$tmp/check$suffix" "$work/image.bin"
+    run "$work/stdin.bin" "$work/translated" "$tmp/check$suffix" "$work/image.bin"
     compare_result "$work/translated" "$oracle"
     python3 corpus/m1/check_pe_console_output.py "$name" "$work/translated"
 done

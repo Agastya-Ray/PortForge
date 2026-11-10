@@ -3,3 +3,6 @@ EXPORTS
     ExitProcess
     GetStdHandle
     WriteFile
+    ReadFile
+    GetLastError
+    SetLastError
