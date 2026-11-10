@@ -102,6 +102,14 @@ int main(void) {
     assert(pf_wine_convert(&api, (uintptr_t)(memory + FIRST_BUFFER),
                            (uintptr_t)(memory + SECOND_BUFFER), 0, 0) == FALSE);
     assert(GetLastError() == 0x7654);
+    uint8_t clock_bytes[9] = {0};
+    SetLastError(0x4321);
+    assert(pf_wine_frequency(&api, (uintptr_t)(clock_bytes + 1), 0, 0, 0));
+    assert(pf_read_le64(clock_bytes + 1) > 0 && GetLastError() == 0x4321);
+    assert(pf_wine_counter(&api, (uintptr_t)(clock_bytes + 1), 0, 0, 0));
+    uint64_t first = pf_read_le64(clock_bytes + 1);
+    assert(pf_wine_counter(&api, (uintptr_t)(clock_bytes + 1), 0, 0, 0));
+    assert(pf_read_le64(clock_bytes + 1) >= first && GetLastError() == 0x4321);
     pf_wine_close(&api);
     if (printf("%016" PRIx64 "\n", digest) < 0 || fflush(stdout) != 0) {
         perror("PortForge could not write Wine evidence");

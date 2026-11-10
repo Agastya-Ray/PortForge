@@ -9,8 +9,9 @@ typedef BOOL (WINAPI *pf_wine_convert_fn)(const FILETIME *, SYSTEMTIME *);
 typedef HANDLE (WINAPI *pf_wine_std_handle_fn)(DWORD);
 typedef BOOL (WINAPI *pf_wine_write_fn)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED);
 typedef BOOL (WINAPI *pf_wine_read_fn)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
+typedef BOOL (WINAPI *pf_wine_counter_fn)(LARGE_INTEGER *);
 
-enum { PF_WINE_EXPORT_COUNT = 8, PF_WINE_STDOUT = 1, PF_WINE_STDERR = 2, PF_WINE_STDIN = 3 };
+enum { PF_WINE_EXPORT_COUNT = 10, PF_WINE_STDOUT = 1, PF_WINE_STDERR = 2, PF_WINE_STDIN = 3 };
 
 struct pf_wine_api {
     HMODULE kernel32;
@@ -19,6 +20,7 @@ struct pf_wine_api {
     pf_wine_std_handle_fn std_handle;
     pf_wine_write_fn write;
     pf_wine_read_fn read;
+    pf_wine_counter_fn counter, frequency;
     HANDLE output, error, input;
     DWORD last_error;
     struct pf_pe_export exports[PF_WINE_EXPORT_COUNT];
@@ -149,6 +151,33 @@ static inline uint64_t pf_wine_exit(void *context, uint64_t a, uint64_t b, uint6
     return (uint32_t)a;
 }
 
+static inline uint64_t pf_wine_clock(struct pf_wine_api *api, pf_wine_counter_fn query, uint64_t address) {
+    LARGE_INTEGER value;
+    DWORD host_error = GetLastError();
+    SetLastError(api->last_error);
+    BOOL ok = query(&value);
+    api->last_error = GetLastError();
+    SetLastError(host_error);
+    if (ok) pf_write_le64((uint8_t *)(uintptr_t)address, (uint64_t)value.QuadPart);
+    return (uint32_t)ok;
+}
+
+static inline uint64_t pf_wine_counter(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)b;
+    (void)c;
+    (void)d;
+    struct pf_wine_api *api = context;
+    return pf_wine_clock(api, api->counter, a);
+}
+
+static inline uint64_t pf_wine_frequency(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)b;
+    (void)c;
+    (void)d;
+    struct pf_wine_api *api = context;
+    return pf_wine_clock(api, api->frequency, a);
+}
+
 /* The caller owns a fresh API object and keeps it alive until the bindings are retired. */
 static inline DWORD pf_wine_open(struct pf_wine_api *api) {
     HMODULE module = LoadLibraryExA("kernel32.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -158,7 +187,9 @@ static inline DWORD pf_wine_open(struct pf_wine_api *api) {
     FARPROC std_handle = GetProcAddress(module, "GetStdHandle");
     FARPROC write = GetProcAddress(module, "WriteFile");
     FARPROC read = GetProcAddress(module, "ReadFile");
-    if (!compare || !convert || !std_handle || !write || !read) {
+    FARPROC counter = GetProcAddress(module, "QueryPerformanceCounter");
+    FARPROC frequency = GetProcAddress(module, "QueryPerformanceFrequency");
+    if (!compare || !convert || !std_handle || !write || !read || !counter || !frequency) {
         FreeLibrary(module);
         return ERROR_PROC_NOT_FOUND;
     }
@@ -169,6 +200,8 @@ static inline DWORD pf_wine_open(struct pf_wine_api *api) {
         .std_handle = (pf_wine_std_handle_fn)(void (*)(void))std_handle,
         .write = (pf_wine_write_fn)(void (*)(void))write,
         .read = (pf_wine_read_fn)(void (*)(void))read,
+        .counter = (pf_wine_counter_fn)(void (*)(void))counter,
+        .frequency = (pf_wine_counter_fn)(void (*)(void))frequency,
         .exports = {
             {
                 .dll = "kernel32.dll", .name = "CompareFileTime",
@@ -197,6 +230,14 @@ static inline DWORD pf_wine_open(struct pf_wine_api *api) {
             },
             {
                 .dll = "kernel32.dll", .name = "SetLastError", .invoke = pf_wine_set_error, .context = api,
+            },
+            {
+                .dll = "kernel32.dll", .name = "QueryPerformanceCounter", .invoke = pf_wine_counter,
+                .context = api, .args = {{.size = 8, .writable = true}},
+            },
+            {
+                .dll = "kernel32.dll", .name = "QueryPerformanceFrequency", .invoke = pf_wine_frequency,
+                .context = api, .args = {{.size = 8, .writable = true}},
             },
         },
     };
