@@ -7,8 +7,8 @@ pf_fixture:
     call *%rcx
     jmp done
 memory_call:
-    mov %rcx, 24(%rsp)
-    call *24(%rsp)
+    mov %rcx, -8(%rsp)
+    call *-8(%rsp)
 done:
     add $40, %rsp
     ret

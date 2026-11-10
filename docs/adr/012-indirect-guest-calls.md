@@ -11,13 +11,14 @@ already translated. The guest stack receives the return address before
 the dispatcher transfers control. A memory operand is read in full
 before the stack changes. A pointer inside the image that does not name
 a translated instruction stops at the original call. Outside the image,
-the existing registered-import checks still apply. Direct calls through
-the import table keep their existing binding rules.
+the existing registered-import checks still apply. RIP-relative memory
+calls continue to require an eager import slot.
 
 The native test uses a Windows-format executable whose two target
 functions are reachable only through pointers. The same code runs on
 x86-64 hardware and in the translated runner. The test covers register
-and stack-held pointers, malformed seeds, and memory faults that must
+and stack-held pointers, including a pointer in the slot that receives the
+return address. It also checks malformed seeds and memory faults that must
 leave the caller's stack unchanged. CI repeats the translation and
 compares its output and execution digest on ARM64.
 

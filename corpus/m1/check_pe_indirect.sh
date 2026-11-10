@@ -31,10 +31,10 @@ cmp "$evidence/lifted.c" "$tmp/repeated.c"
 
 if "$lift" --pe "$guest" --seed-rva 0x1080 --seed-rva 0x1081 > "$tmp/bad.c" 2> "$tmp/bad.log"; then exit 1; fi
 test ! -s "$tmp/bad.c"
-rg -q 'overlaps a decoded instruction' "$tmp/bad.log"
+grep -q 'overlaps a decoded instruction' "$tmp/bad.log"
 if "$lift" --pe "$guest" --seed-rva 0xfffffff0 > "$tmp/bad.c" 2> "$tmp/bad.log"; then exit 1; fi
 test ! -s "$tmp/bad.c"
-rg -q 'no file-backed executable bytes' "$tmp/bad.log"
+grep -q 'no file-backed executable bytes' "$tmp/bad.log"
 if [[ $(uname -m) != x86_64 ]]; then
     cmp "$evidence/lifted.c" "$reference/lifted.c"
     cmp "$evidence/digest.txt" "$reference/digest.txt"

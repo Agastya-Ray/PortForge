@@ -46,9 +46,9 @@ static void check_stops(void) {
     assert(pf_pe_run(&state, STOP, 4) == PF_PE_BUDGET);
     uint64_t rip = state.rip, rsp = state.gpr[4];
     memcpy(previous, stack, SIZE);
-    state.memory.size = rsp - STACK_BASE + 31;
+    state.memory.size = rsp - STACK_BASE - 1;
     assert(pf_pe_run(&state, STOP, 1) == PF_PE_MEMORY_FAULT);
-    assert(state.memory_fault == PF_MEM_UNMAPPED && state.fault_address == rsp + 24);
+    assert(state.memory_fault == PF_MEM_UNMAPPED && state.fault_address == rsp - 8);
     assert(state.rip == rip && state.gpr[4] == rsp && memcmp(stack, previous, SIZE) == 0);
     state.memory.size = SIZE;
     state.memory.writable = false;
