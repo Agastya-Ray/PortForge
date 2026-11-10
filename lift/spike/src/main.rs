@@ -14,17 +14,29 @@ fn compile(mut arguments: impl Iterator<Item = String>) -> Result<String, String
     source.push_str(include_str!("guest.h"));
     let Some(first) = arguments.next() else {
         return Err(
-            "usage: pf-ir-spike <hex-block> [<hex-block> ...] | --pe <file> | --pe-image <file>"
+            "usage: pf-ir-spike <hex-block> [<hex-block> ...] | --pe <file> [--seed-rva <0xRVA>]... | --pe-image <file>"
                 .into(),
         );
     };
     if first == "--pe" {
         let path = arguments.next().ok_or("missing PE path after --pe")?;
-        if arguments.next().is_some() {
-            return Err("--pe expects exactly one input path".into());
+        let mut seeds = Vec::new();
+        while let Some(option) = arguments.next() {
+            if option != "--seed-rva" || seeds.len() == 4096 {
+                return Err("--pe accepts up to 4096 --seed-rva options after the path".into());
+            }
+            let value = arguments.next().ok_or("missing value after --seed-rva")?;
+            let seed = value
+                .strip_prefix("0x")
+                .filter(|digits| digits.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+                .ok_or_else(|| {
+                    format!("invalid --seed-rva {value:?}; expected a hexadecimal RVA")
+                })?;
+            seeds.push(seed);
         }
         let bytes = fs::read(&path).map_err(|error| format!("{path}: {error}"))?;
-        program::emit(&bytes, &mut source).map_err(|error| format!("{path}: {error}"))?;
+        program::emit(&bytes, &seeds, &mut source).map_err(|error| format!("{path}: {error}"))?;
         return Ok(source);
     }
     let mut count = 0;
