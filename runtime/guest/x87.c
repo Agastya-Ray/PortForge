@@ -20,8 +20,8 @@ static bool greater_magnitude(extFloat80_t a, extFloat80_t b) {
     return a_exp > b_exp || (a_exp == b_exp && a.signif > b.signif);
 }
 
-bool pf_x87_add(struct pf_ext80 a, struct pf_ext80 b, uint16_t control,
-                struct pf_x87_result *result) {
+bool pf_x87_binary(enum pf_x87_binary_op op, struct pf_ext80 a, struct pf_ext80 b,
+                   uint16_t control, struct pf_x87_result *result) {
     static const unsigned precision[] = {32, 0, 64, 80};
     static const unsigned rounding[] = {
         softfloat_round_near_even, softfloat_round_min,
@@ -30,6 +30,13 @@ bool pf_x87_add(struct pf_ext80 a, struct pf_ext80 b, uint16_t control,
     unsigned width = precision[(control >> 8) & 3];
     if (width == 0 || !canonical_finite(a) || !canonical_finite(b)) {
         return false;
+    }
+    void (*evaluate)(const extFloat80_t *, const extFloat80_t *, extFloat80_t *);
+    switch (op) {
+    case PF_X87_ADD: evaluate = extF80M_add; break;
+    case PF_X87_SUBTRACT: evaluate = extF80M_sub; break;
+    case PF_X87_MULTIPLY: evaluate = extF80M_mul; break;
+    default: return false;
     }
 
     uint_fast8_t saved_precision = extF80_roundingPrecision;
@@ -44,7 +51,7 @@ bool pf_x87_add(struct pf_ext80 a, struct pf_ext80 b, uint16_t control,
     extFloat80_t lhs = {.signif = a.significand, .signExp = a.sign_exponent};
     extFloat80_t rhs = {.signif = b.significand, .signExp = b.sign_exponent};
     extFloat80_t value;
-    extF80M_add(&lhs, &rhs, &value);
+    evaluate(&lhs, &rhs, &value);
     uint_fast8_t flags = softfloat_exceptionFlags;
     uint16_t status = (subnormal(a) || subnormal(b)) ? PF_X87_DENORMAL : 0;
     if (flags & softfloat_flag_invalid) status |= PF_X87_INVALID;
@@ -56,7 +63,7 @@ bool pf_x87_add(struct pf_ext80 a, struct pf_ext80 b, uint16_t control,
         if (softfloat_roundingMode != softfloat_round_minMag) {
             extFloat80_t truncated;
             softfloat_roundingMode = softfloat_round_minMag;
-            extF80M_add(&lhs, &rhs, &truncated);
+            evaluate(&lhs, &rhs, &truncated);
             if (greater_magnitude(value, truncated)) {
                 status |= PF_X87_C1;
             }
@@ -70,4 +77,9 @@ bool pf_x87_add(struct pf_ext80 a, struct pf_ext80 b, uint16_t control,
 
     *result = (struct pf_x87_result){{value.signif, value.signExp}, status};
     return true;
+}
+
+bool pf_x87_add(struct pf_ext80 a, struct pf_ext80 b, uint16_t control,
+                struct pf_x87_result *result) {
+    return pf_x87_binary(PF_X87_ADD, a, b, control, result);
 }

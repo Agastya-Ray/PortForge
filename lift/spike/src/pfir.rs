@@ -95,6 +95,12 @@ pub enum X87 {
     Absolute,
     Add,
     AddPop,
+    Subtract,
+    SubtractPop,
+    ReverseSubtract,
+    ReverseSubtractPop,
+    Multiply,
+    MultiplyPop,
 }
 
 impl X87 {
@@ -106,6 +112,12 @@ impl X87 {
             Self::Absolute => "PF_FABS",
             Self::Add => "PF_FADD",
             Self::AddPop => "PF_FADDP",
+            Self::Subtract => "PF_FSUB",
+            Self::SubtractPop => "PF_FSUBP",
+            Self::ReverseSubtract => "PF_FSUBR",
+            Self::ReverseSubtractPop => "PF_FSUBRP",
+            Self::Multiply => "PF_FMUL",
+            Self::MultiplyPop => "PF_FMULP",
         }
     }
 }
@@ -453,6 +465,12 @@ fn lift_decoded(
             Mnemonic::FABS => Operation::X87(X87::Absolute),
             Mnemonic::FADD => Operation::X87(X87::Add),
             Mnemonic::FADDP => Operation::X87(X87::AddPop),
+            Mnemonic::FSUB => Operation::X87(X87::Subtract),
+            Mnemonic::FSUBP => Operation::X87(X87::SubtractPop),
+            Mnemonic::FSUBR => Operation::X87(X87::ReverseSubtract),
+            Mnemonic::FSUBRP => Operation::X87(X87::ReverseSubtractPop),
+            Mnemonic::FMUL => Operation::X87(X87::Multiply),
+            Mnemonic::FMULP => Operation::X87(X87::MultiplyPop),
             mnemonic => {
                 return Err(format!(
                     "decoded {mnemonic} at offset {offset}; no lift available"
@@ -467,7 +485,17 @@ fn lift_decoded(
         };
         if let Operation::X87(operation) = operation {
             let (destination, source) = match (operation, instruction.visible_operands()) {
-                (X87::Add | X87::AddPop, [destination, source]) => {
+                (
+                    X87::Add
+                    | X87::AddPop
+                    | X87::Subtract
+                    | X87::SubtractPop
+                    | X87::ReverseSubtract
+                    | X87::ReverseSubtractPop
+                    | X87::Multiply
+                    | X87::MultiplyPop,
+                    [destination, source],
+                ) => {
                     let (DecodedOperandKind::Reg(destination), DecodedOperandKind::Reg(source)) =
                         (&destination.kind, &source.kind)
                     else {

@@ -27,6 +27,13 @@ struct pf_x87_result {
     uint16_t status;
 };
 
+enum pf_x87_binary_op { PF_X87_ADD, PF_X87_SUBTRACT, PF_X87_MULTIPLY };
+
+/* Compute a binary operation for canonical finite inputs. The caller handles traps and stack state.
+ * False means an unsupported operation, input or precision, with result left unchanged. */
+bool pf_x87_binary(enum pf_x87_binary_op op, struct pf_ext80 a, struct pf_ext80 b,
+                   uint16_t control, struct pf_x87_result *result);
+
 /* Compute addition for canonical finite inputs. The caller handles traps and stack state.
  * False means an unsupported input or precision control, with result left unchanged. */
 bool pf_x87_add(struct pf_ext80 a, struct pf_ext80 b, uint16_t control,
@@ -38,7 +45,10 @@ struct pf_x87_state {
     uint8_t occupied;
 };
 
-enum pf_x87_op { PF_FLD1, PF_FLDZ, PF_FCHS, PF_FABS, PF_FADD, PF_FADDP };
+enum pf_x87_op {
+    PF_FLD1, PF_FLDZ, PF_FCHS, PF_FABS, PF_FADD, PF_FADDP,
+    PF_FSUB, PF_FSUBP, PF_FSUBR, PF_FSUBRP, PF_FMUL, PF_FMULP,
+};
 
 static inline bool pf_x87_available(const struct pf_x87_state *state) {
     return (state->control & 0x3f) == 0x3f && !(state->status & PF_X87_ERROR_SUMMARY);
