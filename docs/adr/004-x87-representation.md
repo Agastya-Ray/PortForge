@@ -23,7 +23,8 @@ pinned revision rather than vendored.
 
 Represent the eight physical slots and occupancy separately. Derive TOP
 from the x87 status word and map logical ST(i) through it. This slice covers
-FLD1, FLDZ, FCHS, FABS, and register FADD/FADDP with all exception masks set.
+FLD1, FLDZ, FCHS, FABS, and register FADD/FADDP, FSUB/FSUBP, FSUBR/FSUBRP,
+and FMUL/FMULP with all exception masks set.
 Masked stack faults write the x87 indefinite value and update TOP and tags
 where the instruction pushes or pops. Leave undefined condition bits alone.
 

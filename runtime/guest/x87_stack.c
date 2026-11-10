@@ -90,9 +90,16 @@ bool pf_x87_execute(struct pf_x87_state *state, enum pf_x87_op op,
         }
         return true;
     case PF_FADD:
-    case PF_FADDP: {
+    case PF_FADDP:
+    case PF_FSUB:
+    case PF_FSUBP:
+    case PF_FSUBR:
+    case PF_FSUBRP:
+    case PF_FMUL:
+    case PF_FMULP: {
+        bool pops = op == PF_FADDP || op == PF_FSUBP || op == PF_FSUBRP || op == PF_FMULP;
         if (destination >= 8 || source >= 8
-            || (op == PF_FADDP ? source != 0 : (source != 0 && destination != 0))) {
+            || (pops ? source != 0 : (source != 0 && destination != 0))) {
             return false;
         }
         unsigned lhs = (top + destination) & 7;
@@ -101,13 +108,18 @@ bool pf_x87_execute(struct pf_x87_state *state, enum pf_x87_op op,
             stack_fault(state, lhs, false);
         } else {
             struct pf_x87_result result;
-            if (!pf_x87_add(state->slots[lhs], state->slots[rhs], state->control, &result)) {
+            struct pf_ext80 a = state->slots[lhs], b = state->slots[rhs];
+            enum pf_x87_binary_op operation = PF_X87_SUBTRACT;
+            if (op == PF_FADD || op == PF_FADDP) operation = PF_X87_ADD;
+            if (op == PF_FMUL || op == PF_FMULP) operation = PF_X87_MULTIPLY;
+            bool reversed = op == PF_FSUBR || op == PF_FSUBRP;
+            if (!pf_x87_binary(operation, reversed ? b : a, reversed ? a : b, state->control, &result)) {
                 return false;
             }
             write_slot(state, lhs, result.value);
             state->status = (state->status & ~PF_X87_C1) | result.status;
         }
-        if (op == PF_FADDP) {
+        if (pops) {
             state->occupied &= ~(1u << top);
             set_top(state, (top + 1) & 7);
         }

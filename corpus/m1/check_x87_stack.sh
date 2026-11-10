@@ -8,6 +8,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$evidence"
 cargo build --release --locked --offline -p pf-ir-spike
 blocks=(d9e8 d9ee d9e0 d9e1 d8c1 dcc1 dec1 d8c3 dec0 01c8d8c1d9e8 d9e8d9e8dec1d9e0)
+blocks+=(d8e1 dce9 dee9 d8e9 dce1 dee1 d8c9 dcc9 dec9)
 target/release/pf-ir-spike "${blocks[@]}" > "$tmp/lifted.c"
 target/release/pf-ir-spike "${blocks[@]}" > "$tmp/repeated.c"
 cmp "$tmp/lifted.c" "$tmp/repeated.c"
