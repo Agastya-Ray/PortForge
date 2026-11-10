@@ -191,6 +191,11 @@ pub enum Effect {
         lhs: Value,
         rhs: Value,
     },
+    ShiftXmm {
+        register: u8,
+        operation: &'static str,
+        count: u8,
+    },
     WriteXmm {
         register: u8,
         from: Value,
@@ -368,6 +373,41 @@ fn lift_decoded(
                 Address::for_access(memory, instruction.address_width, length).ok_or_else(error)?;
             effects.extend([
                 Effect::LoadX87Real { address, width },
+                Effect::AdvanceRip(length),
+            ]);
+            offset += usize::from(length);
+            continue;
+        }
+        if matches!(
+            instruction.mnemonic,
+            Mnemonic::PSLLD | Mnemonic::PSLLQ | Mnemonic::PSRLD | Mnemonic::PSRLQ | Mnemonic::PSRAD
+        ) {
+            let unsupported = || format!("unsupported packed shift at offset {offset}");
+            let [destination, source] = instruction.visible_operands() else {
+                return Err(unsupported());
+            };
+            let (DecodedOperandKind::Reg(register), DecodedOperandKind::Imm(immediate)) =
+                (&destination.kind, &source.kind)
+            else {
+                return Err(unsupported());
+            };
+            if register.class() != RegisterClass::XMM || immediate.is_relative {
+                return Err(unsupported());
+            }
+            let count = u8::try_from(immediate.value).map_err(|_| unsupported())?;
+            let operation = match instruction.mnemonic {
+                Mnemonic::PSLLD => "PF_PSLLD",
+                Mnemonic::PSLLQ => "PF_PSLLQ",
+                Mnemonic::PSRLD => "PF_PSRLD",
+                Mnemonic::PSRLQ => "PF_PSRLQ",
+                _ => "PF_PSRAD",
+            };
+            effects.extend([
+                Effect::ShiftXmm {
+                    register: register.id(),
+                    operation,
+                    count,
+                },
                 Effect::AdvanceRip(length),
             ]);
             offset += usize::from(length);
@@ -926,6 +966,13 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                     "    struct pf_xmm v{id} = pf_packed({operation}, v{lhs}, v{rhs});"
                 )
                 .unwrap();
+            }
+            Effect::ShiftXmm {
+                register,
+                operation,
+                count,
+            } => {
+                writeln!(source, "    state->xmm[{register}] = pf_xmm_shift({operation}, state->xmm[{register}], {count});").unwrap();
             }
             Effect::WriteXmm {
                 register,

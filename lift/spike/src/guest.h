@@ -213,3 +213,25 @@ static inline struct pf_xmm pf_packed(enum pf_packed_op op, struct pf_xmm a, str
 #endif
     return result;
 }
+
+enum pf_shift_op { PF_PSLLD, PF_PSLLQ, PF_PSRLD, PF_PSRLQ, PF_PSRAD };
+
+static inline struct pf_xmm pf_xmm_shift(enum pf_shift_op op, struct pf_xmm input, unsigned count) {
+    unsigned width = op == PF_PSLLQ || op == PF_PSRLQ ? 64 : 32;
+    uint64_t mask = width == 64 ? UINT64_MAX : UINT32_MAX;
+    struct pf_xmm result = {0};
+    for (unsigned lane = 0; lane < 128 / width; ++lane) {
+        unsigned index = lane * width / 64, shift = lane * width % 64;
+        uint64_t value = (input.qword[index] >> shift) & mask;
+        uint64_t bits = 0;
+        if (op == PF_PSRAD) {
+            unsigned amount = count < width ? count : width - 1;
+            bits = value >> amount;
+            if (value & (UINT64_C(1) << (width - 1))) bits |= mask ^ (mask >> amount);
+        } else if (count < width) {
+            bits = op == PF_PSLLD || op == PF_PSLLQ ? (value << count) & mask : value >> count;
+        }
+        result.qword[index] |= bits << shift;
+    }
+    return result;
+}

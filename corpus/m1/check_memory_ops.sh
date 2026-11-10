@@ -4,7 +4,7 @@ set -euo pipefail
 suite=${1:?usage: check_memory_ops.sh <suite> [softfloat-directory]}
 extra=()
 case "$suite" in
-    lea|sse2-memory|xmm-moves) ;;
+    lea|sse2-memory|sse2-shifts|xmm-moves) ;;
     scalar|console-ops)
         if [[ $(uname -m) == x86_64 ]]; then extra=(-mno-red-zone); fi
         ;;
