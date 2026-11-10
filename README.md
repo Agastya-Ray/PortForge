@@ -24,12 +24,15 @@ To run the lifter experiment after fetching the locked sources:
 bash corpus/m1/check_arithmetic.sh ./evidence
 bash corpus/m1/check_pe_entry.sh ./evidence/pe-entry  # x86-64 Linux
 bash corpus/m1/check_pe_console.sh ./evidence/console  # x86-64 Linux with Wine, Clang and LLD
+bash corpus/m1/check_pe_console.sh ./evidence/mingw "" mingw  # x86-64 Linux with Wine and MinGW GCC
 ```
 
 The console check builds Windows executables, translates them, and compares
 their raw output and exit status against a native x86-64 run under Wine.
-The ARM64 CI job translates the same executables and compares against those
-reference files. See [console execution](docs/adr/011-console-programs.md) for
+CI builds the same four programs with Clang, MinGW GCC, and MSVC. The
+MSVC job also records native Windows results. The ARM64 job translates
+the original executables from each compiler and checks their output and
+exit status. See [console execution](docs/adr/011-console-programs.md) for
 the supported Wine calls and the runner's limits.
 
 See [Architecture](docs/ARCHITECTURE.md) for the file interface and milestone status.

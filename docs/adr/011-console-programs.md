@@ -2,11 +2,14 @@
 
 Status is accepted for the M1 console fixtures.
 
-Compile three x86-64 Windows console executables from C using Clang and LLD.
-The Windows entry point calls kernel32 directly. The linker generates the
-import table from a definition file. Wine runs the original executables
-on x86-64 to establish reference output. PortForge translates those same
-executables and runs the emitted C inside Wine on x86-64 and ARM64.
+Compile four x86-64 Windows console programs with Clang and LLD, MinGW
+GCC, and MSVC. The Windows entry point calls kernel32 directly. Clang
+uses an import library generated from a definition file, and the other
+two builds use their toolchain's import library. Wine runs the original
+executables on x86-64 to establish reference output. The MSVC build also
+runs on Windows and its output must match the Wine reference. PortForge
+translates each original executable and runs the emitted C inside Wine
+on x86-64 and ARM64.
 
 The `--pe-image` command uses the existing PE loader to materialize the
 preferred image with a 64 MiB allocation limit. The Wine console runner
@@ -35,14 +38,16 @@ import as terminal and the binder requires a terminating implementation.
 
 The fixtures check text with mixed line endings, a computed binary payload,
 embedded zero bytes, a zero-length write, a separate stderr message, and
-a nonzero process exit status. CI compares both streams as raw bytes and
-checks the status against the native run and fixed expected results. It
-also checks repeated PE links, generated C, and mapped images. Fault tests
-verify that invalid arguments leave guest memory and registers intact.
+a nonzero process exit status. The call fixture makes two calls to a
+non-inlined C function with five arguments and compares the results it
+writes. CI compares both streams as raw bytes and checks the status against
+the native run and fixed expected results. It also checks repeated PE
+builds, generated C, and mapped images. Fault tests verify that invalid
+arguments leave guest memory and registers intact.
 
-This is the first set of complete console fixtures. The planned MSVC and
-MinGW program corpus, general Win32 coverage, and the M1 IR decision are
-still open.
+This covers the initial console fixtures across the three compilers.
+The broader program corpus, general Win32 coverage, and the M1 IR
+decision are still open.
 
 - [Windows x64 calling convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention)
 - [WriteFile](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile)
