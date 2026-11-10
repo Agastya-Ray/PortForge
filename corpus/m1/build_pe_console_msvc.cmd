@@ -14,7 +14,7 @@ if not exist "%EVIDENCE%" mkdir "%EVIDENCE%" || exit /b 1
     where cl.exe
     where link.exe
 ) > "%EVIDENCE%\toolchain.txt"
-for %%f in (text count streams calls) do call :fixture %%f || exit /b 1
+for %%f in (text count streams calls input) do call :fixture %%f || exit /b 1
 exit /b 0
 
 :fixture

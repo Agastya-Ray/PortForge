@@ -95,6 +95,9 @@ int main(void) {
     state = caller();
     state.memory.writable = false;
     check_rejected(state, write, bindings, PF_PE_MEMORY_FAULT, PF_MEM_READ_ONLY, BASE + WRITTEN);
+    bindings[write].args[1].writable = true;
+    check_rejected(state, write, bindings, PF_PE_MEMORY_FAULT, PF_MEM_READ_ONLY, BASE + INPUT);
+    bindings[write].args[1].writable = false;
     state = caller();
     state.gpr[4] = BASE;
     check_rejected(state, write, bindings, PF_PE_MEMORY_FAULT, PF_MEM_UNMAPPED, BASE - 8);

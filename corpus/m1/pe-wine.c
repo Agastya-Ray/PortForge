@@ -94,6 +94,14 @@ int main(void) {
     state = caller(memory, true);
     assert(pf_pe_run_bound(&state, STOP, 16, bindings, 2) == PF_PE_RETURNED && !state.gpr[0]);
     for (size_t i = 0; i < sizeof(output); ++i) assert(memory[SECOND_BUFFER + i] == 0xa5);
+    struct pf_wine_api other = {0};
+    SetLastError(0x7654);
+    pf_wine_set_error(&api, 0x1234, 0, 0, 0);
+    assert(pf_wine_get_error(&api, 0, 0, 0, 0) == 0x1234);
+    assert(pf_wine_get_error(&other, 0, 0, 0, 0) == 0);
+    assert(pf_wine_convert(&api, (uintptr_t)(memory + FIRST_BUFFER),
+                           (uintptr_t)(memory + SECOND_BUFFER), 0, 0) == FALSE);
+    assert(GetLastError() == 0x7654);
     pf_wine_close(&api);
     if (printf("%016" PRIx64 "\n", digest) < 0 || fflush(stdout) != 0) {
         perror("PortForge could not write Wine evidence");
