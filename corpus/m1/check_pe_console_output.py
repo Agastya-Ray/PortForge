@@ -30,6 +30,7 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         "streams": (bytes.fromhex("00 ff 0d 0a 00 1a"), b"guest diagnostic\r\n", 23),
         "calls": (calls, b"", 0),
         "input": (INPUT_BYTES, b"", 0),
+        "clock": (b"performance counter ok\n", b"", 0),
     }
 
 

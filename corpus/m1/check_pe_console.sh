@@ -82,7 +82,7 @@ compare_result() {
     done
 }
 
-for name in text count streams calls input; do
+for name in text count streams calls input clock; do
     work="$evidence/$name"
     mkdir -p "$work"
     python3 corpus/m1/check_pe_console_output.py "$name" "$work" --prepare-input
