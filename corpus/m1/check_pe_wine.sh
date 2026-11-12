@@ -4,6 +4,8 @@ set -euo pipefail
 evidence=${1:?usage: check_pe_wine.sh <evidence> [reference-evidence]}
 mkdir -p "$evidence"
 tmp=$(mktemp -d)
+mkdir -m 700 "$tmp/runtime"
+export XDG_RUNTIME_DIR="$tmp/runtime"
 cleanup() {
     if [[ -d "$tmp/prefix" ]]; then
         "${WINESERVER:-/usr/lib/wine/wineserver}" -k >/dev/null 2>&1 || true
