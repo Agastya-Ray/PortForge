@@ -73,6 +73,11 @@ pub enum Packed {
     AddQwords,
     SubDwords,
     SubQwords,
+    And,
+    AndNot,
+    Or,
+    EqualDwords,
+    GreaterSignedDwords,
 }
 
 impl Packed {
@@ -83,6 +88,11 @@ impl Packed {
             Self::AddQwords => "PF_PADDQ",
             Self::SubDwords => "PF_PSUBD",
             Self::SubQwords => "PF_PSUBQ",
+            Self::And => "PF_PAND",
+            Self::AndNot => "PF_PANDN",
+            Self::Or => "PF_POR",
+            Self::EqualDwords => "PF_PCMPEQD",
+            Self::GreaterSignedDwords => "PF_PCMPGTD",
         }
     }
 }
@@ -526,6 +536,11 @@ fn lift_decoded(
             Mnemonic::PADDQ => Operation::Packed(Packed::AddQwords),
             Mnemonic::PSUBD => Operation::Packed(Packed::SubDwords),
             Mnemonic::PSUBQ => Operation::Packed(Packed::SubQwords),
+            Mnemonic::PAND => Operation::Packed(Packed::And),
+            Mnemonic::PANDN => Operation::Packed(Packed::AndNot),
+            Mnemonic::POR => Operation::Packed(Packed::Or),
+            Mnemonic::PCMPEQD => Operation::Packed(Packed::EqualDwords),
+            Mnemonic::PCMPGTD => Operation::Packed(Packed::GreaterSignedDwords),
             Mnemonic::FLD1 => Operation::X87(X87::LoadOne),
             Mnemonic::FLDZ => Operation::X87(X87::LoadZero),
             Mnemonic::FCHS => Operation::X87(X87::ChangeSign),

@@ -26,6 +26,11 @@ static const struct vector_case cases[] = {
     {"paddq", PF_PADDQ, {pf_block_6, pf_block_7, pf_block_8}},
     {"psubd", PF_PSUBD, {pf_block_9, pf_block_10, pf_block_11}},
     {"psubq", PF_PSUBQ, {pf_block_12, pf_block_13, pf_block_14}},
+    {"pand", PF_PAND, {pf_block_16, pf_block_17, pf_block_18}},
+    {"pandn", PF_PANDN, {pf_block_19, pf_block_20, pf_block_21}},
+    {"por", PF_POR, {pf_block_22, pf_block_23, pf_block_24}},
+    {"pcmpeqd", PF_PCMPEQD, {pf_block_25, pf_block_26, pf_block_27}},
+    {"pcmpgtd", PF_PCMPGTD, {pf_block_28, pf_block_29, pf_block_30}},
 };
 
 #if defined(__x86_64__)
@@ -39,6 +44,11 @@ static struct pf_xmm native_reference(enum pf_packed_op operation, struct pf_xmm
     memcpy(&rhs, &b, sizeof(rhs));
     switch (operation) {
     case PF_PXOR: RUN_NATIVE("pxor"); break;
+    case PF_PAND: RUN_NATIVE("pand"); break;
+    case PF_PANDN: RUN_NATIVE("pandn"); break;
+    case PF_POR: RUN_NATIVE("por"); break;
+    case PF_PCMPEQD: RUN_NATIVE("pcmpeqd"); break;
+    case PF_PCMPGTD: RUN_NATIVE("pcmpgtd"); break;
     case PF_PADDD: RUN_NATIVE("paddd"); break;
     case PF_PADDQ: RUN_NATIVE("paddq"); break;
     case PF_PSUBD: RUN_NATIVE("psubd"); break;
@@ -152,7 +162,7 @@ int main(void) {
     }
     verify_mixed_block();
     printf("{\"backend\":\"%s\",\"native_x86_oracle\":%s,\"samples_per_operation\":%u,"
-           "\"operations\":5,\"encodings_per_operation\":3,\"mismatches\":0,"
-           "\"digest\":\"%016" PRIx64 "\"}\n", PF_BACKEND, NATIVE_X86, samples, digest);
+           "\"operations\":%zu,\"encodings_per_operation\":3,\"mismatches\":0,"
+           "\"digest\":\"%016" PRIx64 "\"}\n", PF_BACKEND, NATIVE_X86, samples, sizeof(cases) / sizeof(cases[0]), digest);
     return 0;
 }

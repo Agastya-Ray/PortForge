@@ -6,4 +6,9 @@ blocks=(
     660ffac1 66450ffac1 660ffac0
     660ffbc1 66450ffbc1 660ffbc0
     01c8660fefc1
+    660fdbc1 66450fdbc1 660fdbc0
+    660fdfc1 66450fdfc1 660fdfc0
+    660febc1 66450febc1 660febc0
+    660f76c1 66450f76c1 660f76c0
+    660f66c1 66450f66c1 660f66c0
 )
