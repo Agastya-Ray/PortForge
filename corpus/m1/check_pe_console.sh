@@ -29,8 +29,8 @@ winegcc=${WINEGCC:-winegcc}
 if [[ -z ${WINEGCC:-} ]] && ! command -v "$winegcc" >/dev/null; then winegcc=winegcc-stable; fi
 loader=${WINELOADER:-/usr/lib/wine/wine64}
 export WINEPREFIX="$tmp/prefix" WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
-if ! timeout 120 "$loader" wineboot.exe --init > "$tmp/wineboot.log" 2>&1; then
-    cat "$tmp/wineboot.log" >&2
+if ! timeout 120 "$loader" wineboot.exe --init > "$evidence/wineboot.log" 2>&1; then
+    cat "$evidence/wineboot.log" >&2
     exit 1
 fi
 
@@ -78,7 +78,16 @@ build_guest() {
 compare_result() {
     local output
     for output in stdout.bin stderr.bin exit.txt; do
-        cmp "$1/$output" "$2/$output"
+        if ! cmp "$1/$output" "$2/$output"; then
+            python3 - "$1/$output" "$2/$output" <<'PY'
+from pathlib import Path
+import sys
+for name in sys.argv[1:]:
+    data = Path(name).read_bytes()
+    print(f"{name}: {len(data)} bytes, first 4096 bytes {data[:4096]!r}", file=sys.stderr)
+PY
+            return 1
+        fi
     done
 }
 
