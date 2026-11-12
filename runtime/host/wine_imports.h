@@ -10,8 +10,12 @@ typedef HANDLE (WINAPI *pf_wine_std_handle_fn)(DWORD);
 typedef BOOL (WINAPI *pf_wine_write_fn)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED);
 typedef BOOL (WINAPI *pf_wine_read_fn)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
 typedef BOOL (WINAPI *pf_wine_counter_fn)(LARGE_INTEGER *);
+typedef DWORD (WINAPI *pf_wine_id_fn)(void);
+typedef ULONGLONG (WINAPI *pf_wine_ticks_fn)(void);
+typedef void (WINAPI *pf_wine_sleep_fn)(DWORD);
+typedef void (WINAPI *pf_wine_system_time_fn)(FILETIME *);
 
-enum { PF_WINE_EXPORT_COUNT = 10, PF_WINE_STDOUT = 1, PF_WINE_STDERR = 2, PF_WINE_STDIN = 3 };
+enum { PF_WINE_EXPORT_COUNT = 15, PF_WINE_STDOUT = 1, PF_WINE_STDERR = 2, PF_WINE_STDIN = 3 };
 
 struct pf_wine_api {
     HMODULE kernel32;
@@ -21,6 +25,10 @@ struct pf_wine_api {
     pf_wine_write_fn write;
     pf_wine_read_fn read;
     pf_wine_counter_fn counter, frequency;
+    pf_wine_id_fn process_id, thread_id;
+    pf_wine_ticks_fn ticks;
+    pf_wine_sleep_fn sleep;
+    pf_wine_system_time_fn system_time;
     HANDLE output, error, input;
     DWORD last_error;
     struct pf_pe_export exports[PF_WINE_EXPORT_COUNT];
@@ -178,6 +186,80 @@ static inline uint64_t pf_wine_frequency(void *context, uint64_t a, uint64_t b, 
     return pf_wine_clock(api, api->frequency, a);
 }
 
+static inline DWORD pf_wine_enter(struct pf_wine_api *api) {
+    DWORD saved = GetLastError();
+    SetLastError(api->last_error);
+    return saved;
+}
+
+static inline void pf_wine_leave(struct pf_wine_api *api, DWORD saved) {
+    api->last_error = GetLastError();
+    SetLastError(saved);
+}
+
+static inline uint64_t pf_wine_identity(struct pf_wine_api *api, pf_wine_id_fn query) {
+    DWORD saved = pf_wine_enter(api);
+    DWORD result = query();
+    pf_wine_leave(api, saved);
+    return result;
+}
+
+static inline uint64_t pf_wine_process_id(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)a;
+    (void)b;
+    (void)c;
+    (void)d;
+    struct pf_wine_api *api = context;
+    return pf_wine_identity(api, api->process_id);
+}
+
+static inline uint64_t pf_wine_thread_id(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)a;
+    (void)b;
+    (void)c;
+    (void)d;
+    struct pf_wine_api *api = context;
+    return pf_wine_identity(api, api->thread_id);
+}
+
+static inline uint64_t pf_wine_ticks(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)a;
+    (void)b;
+    (void)c;
+    (void)d;
+    struct pf_wine_api *api = context;
+    DWORD saved = pf_wine_enter(api);
+    uint64_t result = api->ticks();
+    pf_wine_leave(api, saved);
+    return result;
+}
+
+static inline uint64_t pf_wine_sleep(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)b;
+    (void)c;
+    (void)d;
+    struct pf_wine_api *api = context;
+    DWORD saved = pf_wine_enter(api);
+    api->sleep((DWORD)a);
+    pf_wine_leave(api, saved);
+    return 0;
+}
+
+static inline uint64_t pf_wine_system_time(void *context, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    (void)b;
+    (void)c;
+    (void)d;
+    struct pf_wine_api *api = context;
+    FILETIME result;
+    DWORD saved = pf_wine_enter(api);
+    api->system_time(&result);
+    pf_wine_leave(api, saved);
+    uint8_t *bytes = (uint8_t *)(uintptr_t)a;
+    pf_write_le32(bytes, result.dwLowDateTime);
+    pf_write_le32(bytes + 4, result.dwHighDateTime);
+    return 0;
+}
+
 /* The caller owns a fresh API object and keeps it alive until the bindings are retired. */
 static inline DWORD pf_wine_open(struct pf_wine_api *api) {
     HMODULE module = LoadLibraryExA("kernel32.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -189,7 +271,13 @@ static inline DWORD pf_wine_open(struct pf_wine_api *api) {
     FARPROC read = GetProcAddress(module, "ReadFile");
     FARPROC counter = GetProcAddress(module, "QueryPerformanceCounter");
     FARPROC frequency = GetProcAddress(module, "QueryPerformanceFrequency");
-    if (!compare || !convert || !std_handle || !write || !read || !counter || !frequency) {
+    FARPROC process_id = GetProcAddress(module, "GetCurrentProcessId");
+    FARPROC thread_id = GetProcAddress(module, "GetCurrentThreadId");
+    FARPROC ticks = GetProcAddress(module, "GetTickCount64");
+    FARPROC sleep = GetProcAddress(module, "Sleep");
+    FARPROC system_time = GetProcAddress(module, "GetSystemTimeAsFileTime");
+    if (!compare || !convert || !std_handle || !write || !read || !counter || !frequency
+        || !process_id || !thread_id || !ticks || !sleep || !system_time) {
         FreeLibrary(module);
         return ERROR_PROC_NOT_FOUND;
     }
@@ -202,6 +290,11 @@ static inline DWORD pf_wine_open(struct pf_wine_api *api) {
         .read = (pf_wine_read_fn)(void (*)(void))read,
         .counter = (pf_wine_counter_fn)(void (*)(void))counter,
         .frequency = (pf_wine_counter_fn)(void (*)(void))frequency,
+        .process_id = (pf_wine_id_fn)(void (*)(void))process_id,
+        .thread_id = (pf_wine_id_fn)(void (*)(void))thread_id,
+        .ticks = (pf_wine_ticks_fn)(void (*)(void))ticks,
+        .sleep = (pf_wine_sleep_fn)(void (*)(void))sleep,
+        .system_time = (pf_wine_system_time_fn)(void (*)(void))system_time,
         .exports = {
             {
                 .dll = "kernel32.dll", .name = "CompareFileTime",
@@ -239,6 +332,12 @@ static inline DWORD pf_wine_open(struct pf_wine_api *api) {
                 .dll = "kernel32.dll", .name = "QueryPerformanceFrequency", .invoke = pf_wine_frequency,
                 .context = api, .args = {{.size = 8, .writable = true}},
             },
+            {.dll = "kernel32.dll", .name = "GetCurrentProcessId", .invoke = pf_wine_process_id, .context = api},
+            {.dll = "kernel32.dll", .name = "GetCurrentThreadId", .invoke = pf_wine_thread_id, .context = api},
+            {.dll = "kernel32.dll", .name = "GetTickCount64", .invoke = pf_wine_ticks, .context = api},
+            {.dll = "kernel32.dll", .name = "Sleep", .invoke = pf_wine_sleep, .context = api},
+            {.dll = "kernel32.dll", .name = "GetSystemTimeAsFileTime", .invoke = pf_wine_system_time,
+             .context = api, .args = {{.size = 8, .writable = true}}},
         },
     };
     return ERROR_SUCCESS;

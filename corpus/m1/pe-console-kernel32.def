@@ -8,3 +8,8 @@ EXPORTS
     SetLastError
     QueryPerformanceCounter
     QueryPerformanceFrequency
+    GetCurrentProcessId
+    GetCurrentThreadId
+    GetTickCount64
+    Sleep
+    GetSystemTimeAsFileTime

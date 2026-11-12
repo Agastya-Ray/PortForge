@@ -31,6 +31,7 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         "calls": (calls, b"", 0),
         "input": (INPUT_BYTES, b"", 0),
         "clock": (b"performance counter ok\n", b"", 0),
+        "system": (b"system calls ok\n", b"", 0),
     }
 
 
