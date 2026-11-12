@@ -59,11 +59,13 @@ jobs:
           rustup override set 1.85.1
           cargo fetch --locked
           mkdir -p evidence
-          for suite in lea scalar scalar-shifts console-ops sse2-memory sse2-shifts xmm-moves; do
+          for suite in lea scalar console-ops sse2-memory sse2-shifts xmm-moves; do
             bash corpus/m1/check_memory_ops.sh "$suite" > "evidence/$suite.txt"
             printf '%s ' "$suite"
             cat "evidence/$suite.txt"
           done
+          bash corpus/m1/check_memory_ops.sh scalar-shifts > evidence/scalar-shifts.txt
+          cat evidence/scalar-shifts.txt
           printf 'digest=%s\n' "$(sha256sum evidence/*.txt | sha256sum | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -80,11 +82,13 @@ jobs:
           rustup override set 1.85.1
           cargo fetch --locked
           mkdir -p evidence
-          for suite in lea scalar scalar-shifts console-ops sse2-memory sse2-shifts xmm-moves; do
+          for suite in lea scalar console-ops sse2-memory sse2-shifts xmm-moves; do
             bash corpus/m1/check_memory_ops.sh "$suite" > "evidence/$suite.txt"
             printf '%s ' "$suite"
             cat "evidence/$suite.txt"
           done
+          bash corpus/m1/check_memory_ops.sh scalar-shifts > evidence/scalar-shifts.txt
+          cat evidence/scalar-shifts.txt
           test "$(sha256sum evidence/*.txt | sha256sum | cut -d ' ' -f1)" = "$REFERENCE_DIGEST"
         env:
           REFERENCE_DIGEST: ${{ needs.reference.outputs.digest }}

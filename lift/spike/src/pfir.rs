@@ -265,42 +265,6 @@ fn lift_decoded(
     for instruction in instructions {
         let instruction = instruction?;
         let length = instruction.length;
-        if matches!(
-            instruction.mnemonic,
-            Mnemonic::SHL | Mnemonic::SHR | Mnemonic::SAR
-        ) {
-            let unsupported = || format!("unsupported scalar shift at offset {offset}");
-            let [destination, source] = instruction.visible_operands() else {
-                return Err(unsupported());
-            };
-            let DecodedOperandKind::Reg(reg) = destination.kind else {
-                return Err(unsupported());
-            };
-            let width = Width::from_gpr(reg.class()).ok_or_else(unsupported)?;
-            let count = match &source.kind {
-                DecodedOperandKind::Imm(imm) if !imm.is_relative => {
-                    Some(u8::try_from(imm.value).map_err(|_| unsupported())?)
-                }
-                DecodedOperandKind::Reg(reg) if *reg == pf_decode::Register::CL => None,
-                _ => return Err(unsupported()),
-            };
-            let operation = match instruction.mnemonic {
-                Mnemonic::SHL => "PF_SHL",
-                Mnemonic::SHR => "PF_SHR",
-                _ => "PF_SAR",
-            };
-            effects.extend([
-                Effect::ShiftScalar {
-                    register: reg.id(),
-                    width,
-                    operation,
-                    count,
-                },
-                Effect::AdvanceRip(length),
-            ]);
-            offset += usize::from(length);
-            continue;
-        }
         if instruction.mnemonic == Mnemonic::NOP {
             effects.push(Effect::AdvanceRip(length));
             offset += usize::from(length);
@@ -500,6 +464,42 @@ fn lift_decoded(
             };
             effects.extend([read, write, Effect::AdvanceRip(length)]);
             next_value += 1;
+            offset += usize::from(length);
+            continue;
+        }
+        if matches!(
+            instruction.mnemonic,
+            Mnemonic::SHL | Mnemonic::SHR | Mnemonic::SAR
+        ) {
+            let unsupported = || format!("unsupported scalar shift at offset {offset}");
+            let [destination, source] = instruction.visible_operands() else {
+                return Err(unsupported());
+            };
+            let DecodedOperandKind::Reg(reg) = destination.kind else {
+                return Err(unsupported());
+            };
+            let width = Width::from_gpr(reg.class()).ok_or_else(unsupported)?;
+            let count = match &source.kind {
+                DecodedOperandKind::Imm(imm) if !imm.is_relative => {
+                    Some(u8::try_from(imm.value).map_err(|_| unsupported())?)
+                }
+                DecodedOperandKind::Reg(reg) if *reg == pf_decode::Register::CL => None,
+                _ => return Err(unsupported()),
+            };
+            let operation = match instruction.mnemonic {
+                Mnemonic::SHL => "PF_SHL",
+                Mnemonic::SHR => "PF_SHR",
+                _ => "PF_SAR",
+            };
+            effects.extend([
+                Effect::ShiftScalar {
+                    register: reg.id(),
+                    width,
+                    operation,
+                    count,
+                },
+                Effect::AdvanceRip(length),
+            ]);
             offset += usize::from(length);
             continue;
         }
