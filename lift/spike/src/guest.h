@@ -169,6 +169,45 @@ static inline bool pf_condition(uint64_t flags, unsigned condition) {
     return taken != ((condition & 1) != 0);
 }
 
+enum pf_scalar_shift { PF_SHL, PF_SHR, PF_SAR };
+
+static inline void pf_shift_scalar(struct pf_state *state, unsigned reg, unsigned width,
+                                    enum pf_scalar_shift op, uint64_t raw_count) {
+    unsigned count = raw_count & (width - 1);
+    uint64_t mask = width == 64 ? UINT64_MAX : UINT32_MAX;
+    uint64_t input = state->gpr[reg] & mask;
+    if (!count) {
+        state->gpr[reg] = input;
+        return;
+    }
+    uint64_t flags = pf_read_flags(state);
+    uint64_t sign = UINT64_C(1) << (width - 1);
+    unsigned carry;
+    uint64_t result;
+    if (op == PF_SHL) {
+        carry = (input >> (width - count)) & 1;
+        result = (input << count) & mask;
+    } else {
+        carry = (input >> (count - 1)) & 1;
+        result = input >> count;
+        if (op == PF_SAR && (input & sign)) result |= mask ^ (mask >> count);
+    }
+    unsigned parity = (unsigned)(result & 255);
+    parity ^= parity >> 4;
+    parity ^= parity >> 2;
+    parity ^= parity >> 1;
+    flags = (flags & ~UINT64_C(0xc5)) | carry | ((uint64_t)((parity & 1) == 0) << 2)
+        | ((uint64_t)(result == 0) << 6) | ((uint64_t)((result & sign) != 0) << 7);
+    if (count == 1) {
+        unsigned overflow = op == PF_SHL ? ((result & sign) != 0) ^ carry
+            : op == PF_SHR ? (input & sign) != 0 : 0;
+        flags = (flags & ~UINT64_C(0x800)) | ((uint64_t)overflow << 11);
+    }
+    state->gpr[reg] = result;
+    state->rflags = flags;
+    state->pending.operation = PF_NO_FLAGS;
+}
+
 static inline struct pf_xmm pf_packed(enum pf_packed_op op, struct pf_xmm a, struct pf_xmm b) {
     struct pf_xmm result = {0};
 #if defined(__aarch64__) && !defined(PF_PORTABLE_ONLY)

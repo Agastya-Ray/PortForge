@@ -59,7 +59,7 @@ jobs:
           rustup override set 1.85.1
           cargo fetch --locked
           mkdir -p evidence
-          for suite in lea scalar console-ops sse2-memory sse2-shifts xmm-moves; do
+          for suite in lea scalar scalar-shifts console-ops sse2-memory sse2-shifts xmm-moves; do
             bash corpus/m1/check_memory_ops.sh "$suite" > "evidence/$suite.txt"
             printf '%s ' "$suite"
             cat "evidence/$suite.txt"
@@ -80,7 +80,7 @@ jobs:
           rustup override set 1.85.1
           cargo fetch --locked
           mkdir -p evidence
-          for suite in lea scalar console-ops sse2-memory sse2-shifts xmm-moves; do
+          for suite in lea scalar scalar-shifts console-ops sse2-memory sse2-shifts xmm-moves; do
             bash corpus/m1/check_memory_ops.sh "$suite" > "evidence/$suite.txt"
             printf '%s ' "$suite"
             cat "evidence/$suite.txt"
