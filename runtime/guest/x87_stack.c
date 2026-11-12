@@ -31,6 +31,28 @@ static void push(struct pf_x87_state *state, struct pf_ext80 value, uint16_t fla
     set_top(state, slot);
 }
 
+bool pf_x87_load_extended(struct pf_x87_state *state, struct pf_ext80 value) {
+    unsigned exponent = value.sign_exponent & 0x7fff;
+    if (!pf_x87_available(state) || exponent == 0x7fff || ((value.significand >> 63) != (exponent != 0))) return false;
+    push(state, value, 0);
+    return true;
+}
+
+bool pf_x87_store_extended_pop(struct pf_x87_state *state, struct pf_ext80 *value) {
+    if (!pf_x87_available(state)) return false;
+    unsigned top = (state->status & PF_X87_TOP) >> 11;
+    state->status &= ~PF_X87_C1;
+    if (occupied(state, top)) {
+        *value = state->slots[top];
+    } else {
+        state->status |= PF_X87_INVALID | PF_X87_STACK_FAULT;
+        *value = (struct pf_ext80){UINT64_C(0xc000000000000000), 0xffff};
+    }
+    state->occupied &= ~(1u << top);
+    set_top(state, (top + 1) & 7);
+    return true;
+}
+
 bool pf_x87_load_integer(struct pf_x87_state *state, uint64_t bits, unsigned width) {
     if (!pf_x87_available(state) || (width != 16 && width != 32 && width != 64)) return false;
     uint64_t mask = width == 64 ? UINT64_MAX : (UINT64_C(1) << width) - 1;

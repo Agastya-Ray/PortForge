@@ -34,6 +34,7 @@ jobs:
       stack_digest: ${{ steps.reference.outputs.stack_digest }}
       memory_digest: ${{ steps.reference.outputs.memory_digest }}
       fild_digest: ${{ steps.reference.outputs.fild_digest }}
+      extended_digest: ${{ steps.reference.outputs.extended_digest }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - id: reference
@@ -49,6 +50,9 @@ jobs:
           bash corpus/m1/check_memory_ops.sh x87-fild "$RUNNER_TEMP/softfloat" > evidence/x87-fild.txt
           cat evidence/x87-fild.txt
           printf 'fild_digest=%s\n' "$(cat evidence/x87-fild.txt)" >> "$GITHUB_OUTPUT"
+          bash corpus/m1/check_memory_ops.sh x87-extended "$RUNNER_TEMP/softfloat" > evidence/x87-extended.txt
+          cat evidence/x87-extended.txt
+          printf 'extended_digest=%s\n' "$(cat evidence/x87-extended.txt)" >> "$GITHUB_OUTPUT"
           printf 'memory_digest=%s\n' "$(cat evidence/x87-memory.txt)" >> "$GITHUB_OUTPUT"
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -77,6 +81,7 @@ jobs:
           STACK_DIGEST: ${{ needs.reference.outputs.stack_digest }}
           MEMORY_DIGEST: ${{ needs.reference.outputs.memory_digest }}
           FILD_DIGEST: ${{ needs.reference.outputs.fild_digest }}
+          EXTENDED_DIGEST: ${{ needs.reference.outputs.extended_digest }}
         run: |
           rustup toolchain install 1.85.1 --profile minimal
           rustup override set 1.85.1
@@ -90,6 +95,9 @@ jobs:
           bash corpus/m1/check_memory_ops.sh x87-fild "$RUNNER_TEMP/softfloat" > evidence/x87-fild.txt
           cat evidence/x87-fild.txt
           test "$(cat evidence/x87-fild.txt)" = "$FILD_DIGEST"
+          bash corpus/m1/check_memory_ops.sh x87-extended "$RUNNER_TEMP/softfloat" > evidence/x87-extended.txt
+          cat evidence/x87-extended.txt
+          test "$(cat evidence/x87-extended.txt)" = "$EXTENDED_DIGEST"
           python3 - <<'PY'
           import json, os
           with open("evidence/x87-add.json") as report:

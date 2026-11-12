@@ -219,6 +219,10 @@ pub enum Effect {
         address: Address,
         width: Width,
     },
+    ExtendedX87Memory {
+        address: Address,
+        store: bool,
+    },
     LoadX87Integer {
         address: Address,
         width: u16,
@@ -329,6 +333,31 @@ fn lift_decoded(
                 _ => return Err(unsupported()),
             }
             effects.push(Effect::AdvanceRip(length));
+            offset += usize::from(length);
+            continue;
+        }
+        if matches!(instruction.mnemonic, Mnemonic::FLD | Mnemonic::FSTP)
+            && instruction
+                .visible_operands()
+                .first()
+                .is_some_and(|operand| operand.size == 80)
+        {
+            let unsupported = || format!("unsupported extended x87 transfer at offset {offset}");
+            let [operand] = instruction.visible_operands() else {
+                return Err(unsupported());
+            };
+            let DecodedOperandKind::Mem(memory) = &operand.kind else {
+                return Err(unsupported());
+            };
+            let address = Address::for_access(memory, instruction.address_width, length)
+                .ok_or_else(unsupported)?;
+            effects.extend([
+                Effect::ExtendedX87Memory {
+                    address,
+                    store: instruction.mnemonic == Mnemonic::FSTP,
+                },
+                Effect::AdvanceRip(length),
+            ]);
             offset += usize::from(length);
             continue;
         }
@@ -1029,6 +1058,14 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 )
                 .unwrap();
             }
+            Effect::ExtendedX87Memory { ref address, store } => {
+                let address = address.c_expression();
+                writeln!(
+                    source,
+                    "    if (!pf_x87_extended_memory(state, {address}, {store})) return;"
+                )
+                .unwrap();
+            }
             Effect::LoadX87Real { ref address, width } => {
                 let expression = address.c_expression();
                 let width = width.bits();
@@ -1207,7 +1244,7 @@ mod tests {
     }
 
     #[test]
-    fn x87_memory_lifts_only_flat_binary32_and_binary64() {
+    fn x87_memory_lifts_flat_real_values() {
         for (bytes, width) in [([0xd9, 0x00], Width::U32), ([0xdd, 0x00], Width::U64)] {
             let effects = lift(&bytes).unwrap();
             assert!(matches!(
@@ -1216,7 +1253,7 @@ mod tests {
                     if *actual == width
             ));
         }
-        for bytes in [&[0xdb, 0x28][..], &[0xd9, 0xc0], &[0x64, 0xd9, 0x00]] {
+        for bytes in [&[0xd9, 0xc0][..], &[0x64, 0xd9, 0x00]] {
             assert!(lift(bytes).is_err(), "{bytes:02x?}");
         }
     }
