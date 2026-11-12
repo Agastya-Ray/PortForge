@@ -16,6 +16,8 @@ printf 'Console corpus using %s executables on %s\n' "$compiler" "$arch"
 mkdir -p "$evidence"
 evidence=$(realpath "$evidence")
 tmp=$(mktemp -d)
+mkdir -m 700 "$tmp/runtime"
+export XDG_RUNTIME_DIR="$tmp/runtime"
 cleanup() {
     if [[ -d "$tmp/prefix" ]]; then
         "${WINESERVER:-/usr/lib/wine/wineserver}" -k >/dev/null 2>&1 || true
