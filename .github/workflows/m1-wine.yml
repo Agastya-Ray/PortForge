@@ -30,6 +30,7 @@ jobs:
       - shell: cmd
         run: call corpus\m1\build_pe_console_msvc.cmd evidence
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: wine-msvc-native-windows
           path: evidence/
@@ -57,6 +58,7 @@ jobs:
           MINGW_CC=x86_64-w64-mingw32-gcc-posix bash corpus/m1/check_pe_console.sh evidence/console/mingw "" mingw
           bash corpus/m1/check_pe_console.sh evidence/console/msvc msvc-reference msvc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: wine-x86-reference
           path: evidence/
@@ -88,6 +90,7 @@ jobs:
             bash corpus/m1/check_pe_console.sh "evidence/console/$compiler" "reference/console/$compiler" "$compiler"
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: wine-arm64
           path: evidence/

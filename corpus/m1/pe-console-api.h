@@ -13,6 +13,11 @@ __declspec(dllimport) uint32_t GetLastError(void);
 __declspec(dllimport) void SetLastError(uint32_t code);
 __declspec(dllimport) int QueryPerformanceCounter(int64_t *counter);
 __declspec(dllimport) int QueryPerformanceFrequency(int64_t *frequency);
+__declspec(dllimport) uint32_t GetCurrentProcessId(void);
+__declspec(dllimport) uint32_t GetCurrentThreadId(void);
+__declspec(dllimport) uint64_t GetTickCount64(void);
+__declspec(dllimport) void Sleep(uint32_t milliseconds);
+__declspec(dllimport) void GetSystemTimeAsFileTime(uint64_t *time);
 __declspec(dllimport) __declspec(noreturn) void ExitProcess(uint32_t code);
 
 #define STD_OUTPUT_HANDLE ((uint32_t)-11)
