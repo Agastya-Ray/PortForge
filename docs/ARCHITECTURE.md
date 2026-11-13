@@ -50,5 +50,14 @@ instructions. `pf-ir-spike --pe-image` provides the mapped image to the
 buffers before calling Wine and checks a bounded number of instructions.
 CI compares output and exit status from compiler-built console programs on
 native x86-64 and translated ARM64. This covers a narrow set of kernel32
-exports. The full program corpus and the production translator decision
-remain M1 acceptance work.
+exports. [ADR-001](adr/001-ir-choice.md) selects PFIR as the primary
+translator, with Remill retained for comparison. Full instruction coverage
+and the broader program corpus remain M1 acceptance work.
+
+Eight console fixtures now cover text and binary output, helper calls,
+standard input, performance counters, system services, and integer
+arithmetic. Clang, MinGW and MSVC originals are compared with translated
+execution. [ADR-023](adr/023-integer-products-and-carry.md) records the new
+32/64-bit products and carry-chain semantics and their native/ARM64 corpus.
+Threads, exceptions and runtime-generated code still need their planned
+acceptance evidence; this fixture expansion does not complete M1.

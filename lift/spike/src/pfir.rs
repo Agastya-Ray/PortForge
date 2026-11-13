@@ -44,13 +44,17 @@ pub enum Arithmetic {
     Xor,
     Increment,
     Decrement,
+    AddCarry,
+    SubtractBorrow,
+    Multiply,
 }
 
 impl Arithmetic {
     fn c_operator(self) -> char {
         match self {
-            Self::Add | Self::Increment => '+',
-            Self::Subtract | Self::Decrement => '-',
+            Self::Add | Self::Increment | Self::AddCarry => '+',
+            Self::Subtract | Self::Decrement | Self::SubtractBorrow => '-',
+            Self::Multiply => '*',
             Self::And => '&',
             Self::Or => '|',
             Self::Xor => '^',
@@ -64,6 +68,9 @@ impl Arithmetic {
             Self::And | Self::Or | Self::Xor => "PF_LOGIC",
             Self::Increment => "PF_INC",
             Self::Decrement => "PF_DEC",
+            Self::AddCarry => "PF_ADC",
+            Self::SubtractBorrow => "PF_SBB",
+            Self::Multiply => "PF_IMUL",
         }
     }
 }
@@ -408,7 +415,12 @@ fn lift_decoded(
         }
         if matches!(
             instruction.mnemonic,
-            Mnemonic::PUSH | Mnemonic::POP | Mnemonic::INC | Mnemonic::DEC
+            Mnemonic::PUSH
+                | Mnemonic::POP
+                | Mnemonic::INC
+                | Mnemonic::DEC
+                | Mnemonic::NEG
+                | Mnemonic::NOT
         ) {
             let unsupported = || {
                 format!(
@@ -427,24 +439,37 @@ fn lift_decoded(
             match instruction.mnemonic {
                 Mnemonic::PUSH if width == Width::U64 => effects.push(Effect::Push(register)),
                 Mnemonic::POP if width == Width::U64 => effects.push(Effect::Pop(register)),
-                Mnemonic::INC | Mnemonic::DEC => {
-                    let operation = if instruction.mnemonic == Mnemonic::INC {
-                        Arithmetic::Increment
-                    } else {
-                        Arithmetic::Decrement
+                Mnemonic::INC | Mnemonic::DEC | Mnemonic::NEG | Mnemonic::NOT => {
+                    let operation = match instruction.mnemonic {
+                        Mnemonic::INC => Arithmetic::Increment,
+                        Mnemonic::DEC => Arithmetic::Decrement,
+                        Mnemonic::NEG => Arithmetic::Subtract,
+                        _ => Arithmetic::Xor,
                     };
                     let lhs = Value(next_value);
                     let rhs = Value(next_value + 1);
                     let result = Value(next_value + 2);
                     effects.extend([
                         Effect::Read {
-                            into: lhs,
+                            into: if instruction.mnemonic == Mnemonic::NEG {
+                                rhs
+                            } else {
+                                lhs
+                            },
                             register,
                             width,
                         },
                         Effect::Constant {
-                            into: rhs,
-                            bits: 1,
+                            into: if instruction.mnemonic == Mnemonic::NEG {
+                                lhs
+                            } else {
+                                rhs
+                            },
+                            bits: match instruction.mnemonic {
+                                Mnemonic::NEG => 0,
+                                Mnemonic::NOT => u64::MAX,
+                                _ => 1,
+                            },
                             width,
                         },
                         Effect::Binary {
@@ -454,18 +479,20 @@ fn lift_decoded(
                             lhs,
                             rhs,
                         },
-                        Effect::PendingFlags {
+                    ]);
+                    if instruction.mnemonic != Mnemonic::NOT {
+                        effects.push(Effect::PendingFlags {
                             operation,
                             width,
                             lhs,
                             rhs,
                             result,
-                        },
-                        Effect::Write {
-                            register,
-                            from: result,
-                        },
-                    ]);
+                        });
+                    }
+                    effects.push(Effect::Write {
+                        register,
+                        from: result,
+                    });
                     next_value += 3;
                 }
                 _ => return Err(unsupported()),
@@ -699,10 +726,80 @@ fn lift_decoded(
             offset += usize::from(length);
             continue;
         }
+        if instruction.mnemonic == Mnemonic::IMUL && instruction.visible_operands().len() == 3 {
+            let unsupported = || format!("unsupported three-operand IMUL at offset {offset}");
+            let [destination, source, immediate] = instruction.visible_operands() else {
+                unreachable!();
+            };
+            let DecodedOperandKind::Reg(register) = destination.kind else {
+                return Err(unsupported());
+            };
+            let width = Width::from_gpr(register.class()).ok_or_else(unsupported)?;
+            let lhs = Value(next_value);
+            let rhs = Value(next_value + 1);
+            let result = Value(next_value + 2);
+            let read = match &source.kind {
+                DecodedOperandKind::Reg(reg) if Width::from_gpr(reg.class()) == Some(width) => {
+                    Effect::Read {
+                        into: lhs,
+                        register: reg.id(),
+                        width,
+                    }
+                }
+                DecodedOperandKind::Mem(memory) if source.size == u16::from(width.bits()) => {
+                    Effect::LoadScalar {
+                        into: lhs,
+                        address: Address::for_access(memory, instruction.address_width, length)
+                            .ok_or_else(unsupported)?,
+                        width,
+                    }
+                }
+                _ => return Err(unsupported()),
+            };
+            let DecodedOperandKind::Imm(imm) = &immediate.kind else {
+                return Err(unsupported());
+            };
+            if imm.is_relative {
+                return Err(unsupported());
+            }
+            effects.extend([
+                read,
+                Effect::Constant {
+                    into: rhs,
+                    bits: imm.value,
+                    width,
+                },
+                Effect::Binary {
+                    into: result,
+                    operation: Arithmetic::Multiply,
+                    width,
+                    lhs,
+                    rhs,
+                },
+                Effect::PendingFlags {
+                    operation: Arithmetic::Multiply,
+                    width,
+                    lhs,
+                    rhs,
+                    result,
+                },
+                Effect::Write {
+                    register: register.id(),
+                    from: result,
+                },
+                Effect::AdvanceRip(length),
+            ]);
+            next_value += 3;
+            offset += usize::from(length);
+            continue;
+        }
         let operation = match instruction.mnemonic {
             Mnemonic::ADD => Operation::Scalar(Arithmetic::Add, true),
+            Mnemonic::ADC => Operation::Scalar(Arithmetic::AddCarry, true),
             Mnemonic::MOV => Operation::Move,
             Mnemonic::SUB => Operation::Scalar(Arithmetic::Subtract, true),
+            Mnemonic::SBB => Operation::Scalar(Arithmetic::SubtractBorrow, true),
+            Mnemonic::IMUL => Operation::Scalar(Arithmetic::Multiply, true),
             Mnemonic::CMP => Operation::Scalar(Arithmetic::Subtract, false),
             Mnemonic::TEST => Operation::Scalar(Arithmetic::And, false),
             Mnemonic::AND => Operation::Scalar(Arithmetic::And, true),
@@ -1162,9 +1259,15 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
             } => {
                 let operator = operation.c_operator();
                 let width = width.bits();
+                let carry =
+                    if matches!(operation, Arithmetic::AddCarry | Arithmetic::SubtractBorrow) {
+                        format!(" {operator} (pf_read_flags(state) & UINT64_C(1))")
+                    } else {
+                        String::new()
+                    };
                 writeln!(
                     source,
-                    "    uint{width}_t v{id} = v{lhs} {operator} v{rhs};"
+                    "    uint{width}_t v{id} = v{lhs} {operator} v{rhs}{carry};"
                 )
                 .unwrap();
             }
@@ -1201,6 +1304,12 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 result: Value(id),
             } => {
                 let mode = operation.c_flags();
+                if matches!(
+                    operation,
+                    Arithmetic::AddCarry | Arithmetic::SubtractBorrow | Arithmetic::Multiply
+                ) {
+                    source.push_str("    state->rflags = pf_read_flags(state);\n");
+                }
                 if matches!(operation, Arithmetic::Increment | Arithmetic::Decrement) {
                     source.push_str("    state->rflags = (state->rflags & ~UINT64_C(1)) | (pf_read_flags(state) & UINT64_C(1));\n");
                 }
@@ -1338,6 +1447,32 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integer_expansion_rejects_implicit_products_and_unsupported_storage() {
+        for bytes in [
+            &[0xf7, 0xe9][..],               // IMUL ECX, implicit EDX:EAX
+            &[0x48, 0xf7, 0xe9],             // IMUL RCX, implicit RDX:RAX
+            &[0x66, 0x0f, 0xaf, 0xc1],       // IMUL AX, CX
+            &[0x66, 0x6b, 0xc1, 0xff],       // IMUL AX, CX, -1
+            &[0x10, 0xc8],                   // ADC AL, CL
+            &[0x66, 0x11, 0xc8],             // ADC AX, CX
+            &[0x18, 0xc8],                   // SBB AL, CL
+            &[0x66, 0x19, 0xc8],             // SBB AX, CX
+            &[0xf6, 0xd8],                   // NEG AL
+            &[0x66, 0xf7, 0xd0],             // NOT AX
+            &[0x48, 0x11, 0x08],             // ADC [RAX], RCX
+            &[0x48, 0x19, 0x08],             // SBB [RAX], RCX
+            &[0xf7, 0x18],                   // NEG dword [RAX]
+            &[0xf7, 0x10],                   // NOT dword [RAX]
+            &[0xf0, 0x48, 0x11, 0x08],       // LOCK ADC [RAX], RCX
+            &[0x64, 0x48, 0x13, 0x02],       // ADC RAX, FS:[RDX]
+            &[0x65, 0x48, 0x0f, 0xaf, 0x02], // IMUL RAX, GS:[RDX]
+            &[0x65, 0x48, 0x6b, 0x02, 0xff], // IMUL RAX, GS:[RDX], -1
+        ] {
+            assert!(lift(bytes).is_err(), "unexpected lift for {bytes:02x?}");
+        }
+    }
 
     #[test]
     fn decodes_extended_registers_and_both_operand_orders() {

@@ -29,10 +29,19 @@ bash corpus/m1/check_pe_console.sh ./evidence/mingw "" mingw  # x86-64 Linux wit
 
 The console check builds Windows executables, translates them, and compares
 their raw output and exit status against a native x86-64 run under Wine.
-CI builds the same four programs with Clang, MinGW GCC, and MSVC. The
+CI builds the same eight programs with Clang, MinGW GCC, and MSVC. The
 MSVC job also records native Windows results. The ARM64 job translates
 the original executables from each compiler and checks their output and
 exit status. See [console execution](docs/adr/011-console-programs.md) for
 the supported Wine calls and the runner's limits.
+
+The [integer arithmetic corpus](docs/adr/023-integer-products-and-carry.md)
+checks 44 instruction forms against native x86 execution and compares
+their digest on ARM64. It includes multiplication, carry/borrow chains,
+negation and bit inversion. Run it with:
+
+```sh
+bash corpus/m1/check_memory_ops.sh integer-products
+```
 
 See [Architecture](docs/ARCHITECTURE.md) for the file interface and milestone status.
