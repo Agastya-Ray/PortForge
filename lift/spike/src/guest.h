@@ -18,7 +18,7 @@ struct pf_xmm {
 
 _Static_assert(sizeof(struct pf_xmm) == 16, "XMM layout");
 
-enum pf_packed_op { PF_PXOR, PF_PADDD, PF_PADDQ, PF_PSUBD, PF_PSUBQ };
+enum pf_packed_op { PF_PXOR, PF_PADDD, PF_PADDQ, PF_PSUBD, PF_PSUBQ, PF_PAND, PF_PANDN, PF_POR, PF_PCMPEQD, PF_PCMPGTD };
 
 enum pf_arithmetic { PF_NO_FLAGS, PF_ADD, PF_SUB, PF_LOGIC, PF_INC, PF_DEC };
 
@@ -200,6 +200,15 @@ static inline struct pf_xmm pf_packed(enum pf_packed_op op, struct pf_xmm a, str
     uint64x2_t value = vdupq_n_u64(0);
     switch (op) {
     case PF_PXOR: value = veorq_u64(lhs, rhs); break;
+    case PF_PAND: value = vandq_u64(lhs, rhs); break;
+    case PF_PANDN: value = vbicq_u64(rhs, lhs); break;
+    case PF_POR: value = vorrq_u64(lhs, rhs); break;
+    case PF_PCMPEQD:
+        value = vreinterpretq_u64_u32(vceqq_u32(vreinterpretq_u32_u64(lhs), vreinterpretq_u32_u64(rhs)));
+        break;
+    case PF_PCMPGTD:
+        value = vreinterpretq_u64_u32(vcgtq_s32(vreinterpretq_s32_u64(lhs), vreinterpretq_s32_u64(rhs)));
+        break;
     case PF_PADDQ: value = vaddq_u64(lhs, rhs); break;
     case PF_PSUBQ: value = vsubq_u64(lhs, rhs); break;
     case PF_PADDD:
@@ -218,16 +227,30 @@ static inline struct pf_xmm pf_packed(enum pf_packed_op op, struct pf_xmm a, str
         uint64_t rhs = b.qword[i];
         switch (op) {
         case PF_PXOR: result.qword[i] = lhs ^ rhs; break;
+        case PF_PAND: result.qword[i] = lhs & rhs; break;
+        case PF_PANDN: result.qword[i] = ~lhs & rhs; break;
+        case PF_POR: result.qword[i] = lhs | rhs; break;
         case PF_PADDQ: result.qword[i] = lhs + rhs; break;
         case PF_PSUBQ: result.qword[i] = lhs - rhs; break;
         case PF_PADDD:
-        case PF_PSUBD: {
+        case PF_PSUBD:
+        case PF_PCMPEQD:
+        case PF_PCMPGTD: {
             uint32_t low_a = (uint32_t)lhs;
             uint32_t low_b = (uint32_t)rhs;
             uint32_t high_a = (uint32_t)(lhs >> 32);
             uint32_t high_b = (uint32_t)(rhs >> 32);
-            uint32_t low = op == PF_PADDD ? low_a + low_b : low_a - low_b;
-            uint32_t high = op == PF_PADDD ? high_a + high_b : high_a - high_b;
+            uint32_t low, high;
+            if (op == PF_PCMPEQD) {
+                low = low_a == low_b ? UINT32_MAX : 0;
+                high = high_a == high_b ? UINT32_MAX : 0;
+            } else if (op == PF_PCMPGTD) {
+                low = (low_a ^ UINT32_C(0x80000000)) > (low_b ^ UINT32_C(0x80000000)) ? UINT32_MAX : 0;
+                high = (high_a ^ UINT32_C(0x80000000)) > (high_b ^ UINT32_C(0x80000000)) ? UINT32_MAX : 0;
+            } else {
+                low = op == PF_PADDD ? low_a + low_b : low_a - low_b;
+                high = op == PF_PADDD ? high_a + high_b : high_a - high_b;
+            }
             result.qword[i] = ((uint64_t)high << 32) | low;
             break;
         }
