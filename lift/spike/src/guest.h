@@ -101,6 +101,29 @@ static inline bool pf_load_x87_real(struct pf_state *state, uint64_t address, un
 
 #define PF_ARITHMETIC_FLAGS UINT64_C(0x8d5)
 
+static inline bool pf_x87_extended_memory(struct pf_state *state, uint64_t address, bool store) {
+    if (!pf_x87_available(&state->x87)) {
+        state->x87_unsupported = true;
+        return false;
+    }
+    uint8_t *bytes;
+    if (!pf_guest_span(state, address, 10, 1, store, &bytes)) return false;
+    struct pf_ext80 value;
+    if (store) {
+        if (pf_x87_store_extended_pop(&state->x87, &value)) {
+            pf_write_le64(bytes, value.significand);
+            bytes[8] = (uint8_t)value.sign_exponent;
+            bytes[9] = (uint8_t)(value.sign_exponent >> 8);
+            return true;
+        }
+    } else {
+        value = (struct pf_ext80){pf_read_le64(bytes), (uint16_t)(bytes[8] | ((uint16_t)bytes[9] << 8))};
+        if (pf_x87_load_extended(&state->x87, value)) return true;
+    }
+    state->x87_unsupported = true;
+    return false;
+}
+
 static inline bool pf_load_x87_integer(struct pf_state *state, uint64_t address, unsigned width) {
     if (!pf_x87_available(&state->x87)) {
         state->x87_unsupported = true;

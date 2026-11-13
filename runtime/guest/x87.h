@@ -65,4 +65,8 @@ bool pf_x87_load_real(struct pf_x87_state *state, uint64_t bits, unsigned width)
 /* Push a signed 16-, 32-, or 64-bit integer exactly. False leaves state unchanged. */
 bool pf_x87_load_integer(struct pf_x87_state *state, uint64_t bits, unsigned width);
 
+/* Exact memory transfers in the guest's 80-bit representation. */
+bool pf_x87_load_extended(struct pf_x87_state *state, struct pf_ext80 value);
+bool pf_x87_store_extended_pop(struct pf_x87_state *state, struct pf_ext80 *value);
+
 #endif
