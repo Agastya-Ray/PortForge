@@ -235,6 +235,12 @@ pub enum Effect {
         lhs: Value,
         rhs: Value,
     },
+    ShiftScalar {
+        register: u8,
+        width: Width,
+        operation: &'static str,
+        count: Option<u8>,
+    },
     ShiftXmm {
         register: u8,
         operation: &'static str,
@@ -619,6 +625,42 @@ fn lift_decoded(
             };
             effects.extend([read, write, Effect::AdvanceRip(length)]);
             next_value += 1;
+            offset += usize::from(length);
+            continue;
+        }
+        if matches!(
+            instruction.mnemonic,
+            Mnemonic::SHL | Mnemonic::SHR | Mnemonic::SAR
+        ) {
+            let unsupported = || format!("unsupported scalar shift at offset {offset}");
+            let [destination, source] = instruction.visible_operands() else {
+                return Err(unsupported());
+            };
+            let DecodedOperandKind::Reg(reg) = destination.kind else {
+                return Err(unsupported());
+            };
+            let width = Width::from_gpr(reg.class()).ok_or_else(unsupported)?;
+            let count = match &source.kind {
+                DecodedOperandKind::Imm(imm) if !imm.is_relative => {
+                    Some(u8::try_from(imm.value).map_err(|_| unsupported())?)
+                }
+                DecodedOperandKind::Reg(reg) if *reg == pf_decode::Register::CL => None,
+                _ => return Err(unsupported()),
+            };
+            let operation = match instruction.mnemonic {
+                Mnemonic::SHL => "PF_SHL",
+                Mnemonic::SHR => "PF_SHR",
+                _ => "PF_SAR",
+            };
+            effects.extend([
+                Effect::ShiftScalar {
+                    register: reg.id(),
+                    width,
+                    operation,
+                    count,
+                },
+                Effect::AdvanceRip(length),
+            ]);
             offset += usize::from(length);
             continue;
         }
@@ -1181,6 +1223,21 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 writeln!(
                     source,
                     "    struct pf_xmm v{id} = pf_packed({operation}, v{lhs}, v{rhs});"
+                )
+                .unwrap();
+            }
+            Effect::ShiftScalar {
+                register,
+                width,
+                operation,
+                count,
+            } => {
+                let width = width.bits();
+                let count =
+                    count.map_or_else(|| "state->gpr[1]".to_owned(), |count| count.to_string());
+                writeln!(
+                    source,
+                    "    pf_shift_scalar(state, {register}, {width}, {operation}, {count});"
                 )
                 .unwrap();
             }

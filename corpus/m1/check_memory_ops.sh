@@ -12,6 +12,9 @@ case "$suite" in
         work=${2:?missing SoftFloat directory}
         extra=(-I"$work/source/source/include" runtime/guest/{x87,x87_stack}.c "$work/build/softfloat.a")
         ;;
+    scalar-shifts)
+        if [[ $(uname -m) == x86_64 ]]; then extra=(-mno-red-zone); fi
+        ;;
     *) exit 2 ;;
 esac
 tmp=$(mktemp -d)
