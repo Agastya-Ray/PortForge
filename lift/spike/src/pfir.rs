@@ -1,5 +1,7 @@
 use crate::address::Address;
-use pf_decode::{DecodedOperandKind, Decoder, Instruction, Mnemonic, Mode, RegisterClass};
+use pf_decode::{
+    DecodedOperandKind, Decoder, Instruction, MachineMode, Mnemonic, Mode, Register, RegisterClass,
+};
 use std::fmt::Write;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,7 +146,39 @@ enum Operation {
 pub struct Value(usize);
 
 #[derive(Debug, PartialEq, Eq)]
+pub enum NarrowLocation {
+    Register { index: u8, shift: u8 },
+    Memory(Address),
+}
+
+fn narrow_register(reg: Register) -> NarrowLocation {
+    NarrowLocation::Register {
+        index: reg.largest_enclosing(MachineMode::LONG_64).id(),
+        shift: if matches!(
+            reg,
+            Register::AH | Register::CH | Register::DH | Register::BH
+        ) {
+            8
+        } else {
+            0
+        },
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum Effect {
+    ExtendNarrow {
+        into: Value,
+        source: NarrowLocation,
+        source_width: u16,
+        destination: u8,
+        width: Width,
+        signed: bool,
+    },
+    SetCondition {
+        destination: NarrowLocation,
+        condition: u8,
+    },
     Read {
         into: Value,
         register: u8,
@@ -273,6 +307,94 @@ fn lift_decoded(
     for instruction in instructions {
         let instruction = instruction?;
         let length = instruction.length;
+        if matches!(
+            instruction.mnemonic,
+            Mnemonic::MOVZX | Mnemonic::MOVSX | Mnemonic::MOVSXD
+        ) {
+            let unsupported = || format!("unsupported extension at offset {offset}");
+            let [destination, source] = instruction.visible_operands() else {
+                return Err(unsupported());
+            };
+            let DecodedOperandKind::Reg(reg) = destination.kind else {
+                return Err(unsupported());
+            };
+            let width = Width::from_gpr(reg.class()).ok_or_else(unsupported)?;
+            if !matches!(source.size, 8 | 16 | 32) {
+                return Err(unsupported());
+            }
+            let location = match &source.kind {
+                DecodedOperandKind::Reg(reg)
+                    if matches!(
+                        reg.class(),
+                        RegisterClass::GPR8 | RegisterClass::GPR16 | RegisterClass::GPR32
+                    ) =>
+                {
+                    narrow_register(*reg)
+                }
+                DecodedOperandKind::Mem(memory) => NarrowLocation::Memory(
+                    Address::for_access(memory, instruction.address_width, length)
+                        .ok_or_else(unsupported)?,
+                ),
+                _ => return Err(unsupported()),
+            };
+            effects.extend([
+                Effect::ExtendNarrow {
+                    into: Value(next_value),
+                    source: location,
+                    source_width: source.size,
+                    destination: reg.id(),
+                    width,
+                    signed: instruction.mnemonic != Mnemonic::MOVZX,
+                },
+                Effect::AdvanceRip(length),
+            ]);
+            next_value += 1;
+            offset += usize::from(length);
+            continue;
+        }
+        if matches!(
+            instruction.mnemonic,
+            Mnemonic::SETO
+                | Mnemonic::SETNO
+                | Mnemonic::SETB
+                | Mnemonic::SETNB
+                | Mnemonic::SETZ
+                | Mnemonic::SETNZ
+                | Mnemonic::SETBE
+                | Mnemonic::SETNBE
+                | Mnemonic::SETS
+                | Mnemonic::SETNS
+                | Mnemonic::SETP
+                | Mnemonic::SETNP
+                | Mnemonic::SETL
+                | Mnemonic::SETNL
+                | Mnemonic::SETLE
+                | Mnemonic::SETNLE
+        ) {
+            let unsupported = || format!("unsupported condition result at offset {offset}");
+            let [destination] = instruction.visible_operands() else {
+                return Err(unsupported());
+            };
+            let location = match &destination.kind {
+                DecodedOperandKind::Reg(reg) if reg.class() == RegisterClass::GPR8 => {
+                    narrow_register(*reg)
+                }
+                DecodedOperandKind::Mem(memory) if destination.size == 8 => NarrowLocation::Memory(
+                    Address::for_access(memory, instruction.address_width, length)
+                        .ok_or_else(unsupported)?,
+                ),
+                _ => return Err(unsupported()),
+            };
+            effects.extend([
+                Effect::SetCondition {
+                    destination: location,
+                    condition: instruction.opcode & 15,
+                },
+                Effect::AdvanceRip(length),
+            ]);
+            offset += usize::from(length);
+            continue;
+        }
         if instruction.mnemonic == Mnemonic::NOP {
             effects.push(Effect::AdvanceRip(length));
             offset += usize::from(length);
@@ -878,6 +1000,57 @@ fn lift_decoded(
 pub fn emit_c(block: &[Effect], source: &mut String) {
     for effect in block {
         match *effect {
+            Effect::ExtendNarrow {
+                into: Value(id),
+                source: ref location,
+                source_width,
+                destination,
+                width,
+                signed,
+            } => {
+                match location {
+                    NarrowLocation::Register { index, shift } => writeln!(
+                        source,
+                        "    uint64_t v{id} = state->gpr[{index}] >> {shift};"
+                    )
+                    .unwrap(),
+                    NarrowLocation::Memory(address) => {
+                        let address = address.c_expression();
+                        let bytes = source_width / 8;
+                        writeln!(source, "    uint8_t *p{id};\n    if (!pf_guest_span(state, {address}, {bytes}, 1, false, &p{id})) return;").unwrap();
+                        writeln!(source, "    uint64_t v{id} = 0;\n    for (unsigned i = 0; i < {bytes}; ++i) v{id} |= (uint64_t)p{id}[i] << (8 * i);").unwrap();
+                    }
+                }
+                let mask = (1_u64 << source_width) - 1;
+                writeln!(source, "    v{id} &= UINT64_C({mask:#x});").unwrap();
+                if signed {
+                    let sign = 1_u64 << (source_width - 1);
+                    writeln!(
+                        source,
+                        "    if (v{id} & UINT64_C({sign:#x})) v{id} |= ~UINT64_C({mask:#x});"
+                    )
+                    .unwrap();
+                }
+                let width = width.bits();
+                writeln!(
+                    source,
+                    "    state->gpr[{destination}] = (uint{width}_t)v{id};"
+                )
+                .unwrap();
+            }
+            Effect::SetCondition {
+                ref destination,
+                condition,
+            } => match destination {
+                NarrowLocation::Register { index, shift } => {
+                    writeln!(source, "    state->gpr[{index}] = (state->gpr[{index}] & ~(UINT64_C(255) << {shift})) | ((uint64_t)pf_condition(pf_read_flags(state), {condition}) << {shift});").unwrap();
+                }
+                NarrowLocation::Memory(address) => {
+                    let address = address.c_expression();
+                    source.push_str("    { uint8_t *byte;\n");
+                    writeln!(source, "      if (!pf_guest_span(state, {address}, 1, 1, true, &byte)) return;\n      *byte = pf_condition(pf_read_flags(state), {condition}); }}").unwrap();
+                }
+            },
             Effect::Read {
                 into: Value(id),
                 register,
