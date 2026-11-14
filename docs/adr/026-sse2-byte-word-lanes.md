@@ -33,3 +33,11 @@ checks as MOVDQA/MOVDQU, and fuzz all six move forms.
 The fixture requests 16-byte global alignment with the native MSVC or
 GCC/Clang spelling. This avoids silently ignored alignment attributes while
 keeping one shared C source for all three compiler builds.
+
+The expanded Remill comparison exposed a pinned LLVM-CBE generator bug:
+unsigned minima were emitted as invalid identifiers such as UCHAR0 and
+USHRT0. Apply a strict, idempotent source patch before building that tool;
+unsigned minima must be the literal zero. Do not rewrite emitted game C
+or relax compilation checks. A small LLVM-intrinsic regression compiles and
+executes scalar/vector unsigned saturating subtraction at 8/16/32/64 bits,
+including exhaustive byte inputs, before the rebuilt generator is used.
