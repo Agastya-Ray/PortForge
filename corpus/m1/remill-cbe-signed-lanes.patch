@@ -1,0 +1,65 @@
+diff --git a/lib/Target/CBackend/CBackend.cpp b/lib/Target/CBackend/CBackend.cpp
+index 74156f5..70d34ce 100644
+--- a/lib/Target/CBackend/CBackend.cpp
++++ b/lib/Target/CBackend/CBackend.cpp
+@@ -2844,3 +2844,12 @@ void CWriter::generateHeader(Module &M) {
+       } else {
++        bool isSignedBit = isSigned && (*it).second->getElementType()->isIntegerTy(1);
++        if (isSignedBit) {
++          Out << "(0 - (int)";
++        } else if (isSigned) {
++          Out << "(";
++          printTypeName(Out, (*it).second->getElementType(), true);
++          Out << ")";
++        }
+         Out << "l.vector[" << n << "]";
++        if (isSignedBit) Out << ")";
+         switch ((*it).first) {
+@@ -2872,3 +2881,12 @@ void CWriter::generateHeader(Module &M) {
+         }
+-        Out << "r.vector[" << n << "];\n";
++        if (isSignedBit) {
++          Out << "(0 - (int)";
++        } else if (isSigned) {
++          Out << "(";
++          printTypeName(Out, (*it).second->getElementType(), true);
++          Out << ")";
++        }
++        Out << "r.vector[" << n << "]";
++        if (isSignedBit) Out << ")";
++        Out << ";\n";
+       }
+@@ -2951,3 +2969,16 @@ void CWriter::generateHeader(Module &M) {
+       for (n = 0; n < l; n++) {
+-        Out << "  out.vector[" << n << "] = in.vector[" << n << "];\n";
++        Out << "  out.vector[" << n << "] = ";
++        Type *SrcElemTy = cast<VectorType>(SrcTy)->getElementType();
++        Type *DstElemTy = cast<VectorType>(DstTy)->getElementType();
++        if (opcode == Instruction::SExt && SrcElemTy->isIntegerTy(1)) {
++          Out << "0 - (";
++          printTypeName(Out, DstElemTy, false);
++          Out << ")in.vector[" << n << "];\n";
++        } else {
++          Out << "(";
++          printTypeName(Out, DstElemTy, DstSigned);
++          Out << ")(";
++          printTypeName(Out, SrcElemTy, SrcSigned);
++          Out << ")in.vector[" << n << "];\n";
++        }
+       }
+@@ -3081,2 +3112,7 @@ void CWriter::generateHeader(Module &M) {
+         } else {
++          if (isSigned) {
++            Out << "(";
++            printTypeName(Out, ElemTy, true);
++            Out << ")";
++          }
+           Out << "a.vector[" << n << "]";
+@@ -3125,2 +3161,7 @@ void CWriter::generateHeader(Module &M) {
+           }
++          if (isSigned) {
++            Out << "(";
++            printTypeName(Out, ElemTy, true);
++            Out << ")";
++          }
+           Out << "b.vector[" << n << "]";

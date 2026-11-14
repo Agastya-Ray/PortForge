@@ -32,6 +32,49 @@ for bits in (8, 16, 32, 64):
         else:
             lines += ['  ret i64 %result']
         lines += ['}']
+
+# These operations preserve signed interpretation even though CBE vector storage is unsigned.
+for bits in (8, 16, 32, 64):
+    vector = f'<2 x i{bits}>'
+    for operation in ('ashr', 'slt', 'sge'):
+        lines += [f'define i64 @pf_cbe_{operation}{bits}(i64 %left, i64 %right) {{']
+        if bits != 64:
+            lines += [f'  %a = trunc i64 %left to i{bits}', f'  %b = trunc i64 %right to i{bits}']
+            a, b = '%a', '%b'
+        else:
+            a, b = '%left', '%right'
+        lines += [f'  %va = insertelement {vector} zeroinitializer, i{bits} {a}, i32 1',
+                  f'  %vb = insertelement {vector} zeroinitializer, i{bits} {b}, i32 1']
+        result_bits = bits if operation == 'ashr' else 1
+        if operation == 'ashr':
+            lines += [f'  %v = ashr {vector} %va, %vb']
+        else:
+            lines += [f'  %v = icmp {operation} {vector} %va, %vb']
+        lines += [f'  %result = extractelement <2 x i{result_bits}> %v, i32 1']
+        if result_bits != 64:
+            lines += [f'  %extended = zext i{result_bits} %result to i64', '  ret i64 %extended']
+        else:
+            lines += ['  ret i64 %result']
+        lines += ['}']
+for bits, target in ((1, 64), (8, 16), (16, 32), (32, 64)):
+    lines += [f'define i64 @pf_cbe_extend{bits}(i64 %left, i64 %ignored) {{',
+              f'  %a = trunc i64 %left to i{bits}',
+              f'  %va = insertelement <2 x i{bits}> zeroinitializer, i{bits} %a, i32 1',
+              f'  %v = sext <2 x i{bits}> %va to <2 x i{target}>',
+              f'  %result = extractelement <2 x i{target}> %v, i32 1']
+    if target != 64:
+        lines += [f'  %extended = zext i{target} %result to i64', '  ret i64 %extended']
+    else:
+        lines += ['  ret i64 %result']
+    lines += ['}']
+
+lines += ['define i64 @pf_cbe_bit_slt(i64 %left, i64 %right) {',
+          '  %a = trunc i64 %left to i1', '  %b = trunc i64 %right to i1',
+          '  %va = insertelement <2 x i1> zeroinitializer, i1 %a, i32 1',
+          '  %vb = insertelement <2 x i1> zeroinitializer, i1 %b, i32 1',
+          '  %v = icmp slt <2 x i1> %va, %vb',
+          '  %result = extractelement <2 x i1> %v, i32 1',
+          '  %extended = zext i1 %result to i64', '  ret i64 %extended', '}']
 Path(sys.argv[1]).write_text('\n'.join(lines) + '\n')
 PY
 "$cbe" "$tmp/cases.ll" -o "$tmp/cases.c"

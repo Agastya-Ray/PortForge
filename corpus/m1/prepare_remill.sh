@@ -34,12 +34,14 @@ fi
 checkout "$work/llvm-cbe" https://github.com/JuliaHubOSS/llvm-cbe.git \
     21569b994b019c711c5631edf1e7273332138f3d
 
-# Fix unsigned minimum literal emission in this pinned CBE revision before building.
-patch_file="$(cd "$(dirname "$0")" && pwd)/remill-cbe-unsigned-min.patch"
-if ! git -C "$work/llvm-cbe" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
-    git -C "$work/llvm-cbe" apply --check "$patch_file"
-    git -C "$work/llvm-cbe" apply "$patch_file"
-fi
+# Repair unsigned zero literals and signed vector lanes in this pinned CBE revision.
+for patch_name in remill-cbe-unsigned-min.patch remill-cbe-signed-lanes.patch; do
+    patch_file="$(cd "$(dirname "$0")" && pwd)/$patch_name"
+    if ! git -C "$work/llvm-cbe" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
+        git -C "$work/llvm-cbe" apply --check "$patch_file"
+        git -C "$work/llvm-cbe" apply "$patch_file"
+    fi
+done
 
 export CC=clang-19 CXX=clang++-19
 llvm_dir=$(llvm-config-19 --cmakedir)

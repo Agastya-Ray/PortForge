@@ -48,3 +48,11 @@ Remill signed operators and explicit lane bounds, with register/memory
 selectors. Keep the shared native oracle and all 26-operation comparison
 checks. An unexpected Remill hypercall aborts with its operation and RIP;
 it never substitutes PFIR or silently accepts an unsupported reference.
+
+The next native comparison isolated a further CBE defect: its vector storage
+is unsigned, but arithmetic right shifts, signed comparisons and sign
+extensions read those lanes without scalar signed casts. Emit the required
+source/destination element casts, including all-ones extension of an i1 mask.
+Extend the rebuilt-generator regression with arithmetic shifts, signed lane
+comparisons and sign extensions at 8/16/32/64 bits and i1 masks. The tests
+use independent unsigned bit formulas rather than the generator logic.
