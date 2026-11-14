@@ -107,6 +107,15 @@ if [[ ! -f "$softfloat/build/softfloat.a" ]]; then
     bash corpus/m1/prepare_softfloat.sh "$softfloat" "$abi"
 fi
 
+# Exercise loader-created C TLS on real Wine threads before any guest translation.
+if [[ $compiler == clang ]]; then
+    "$winegcc" "${target[@]}" -std=gnu11 -O2 -Wall -Wextra -Werror \
+        -I"$softfloat/source/source/include" corpus/m1/wine_tls.c runtime/host/wine_tls.c \
+        "$softfloat/build/softfloat.a" -o "$tmp/tls.exe"
+    timeout 30 "$loader" "$tmp/tls$suffix" > "$evidence/softfloat-tls.txt"
+    printf 'Wine thread-local SoftFloat state passed\n' | cmp - "$evidence/softfloat-tls.txt"
+fi
+
 for name in text count streams calls input clock system arithmetic storage division vectors x87; do
     work="$evidence/$name"
     mkdir -p "$work"
@@ -148,7 +157,7 @@ for name in text count streams calls input clock system arithmetic storage divis
     fi
     "$winegcc" "${target[@]}" -std=gnu11 -O2 -Wall -Wextra -Werror -I"$work" \
         -Iruntime/guest -I"$softfloat/source/source/include" \
-        runtime/host/wine_console.c runtime/guest/{x87,x87_stack}.c "$softfloat/build/softfloat.a" -o "$tmp/check.exe"
+        runtime/host/wine_console.c runtime/host/wine_tls.c runtime/guest/{x87,x87_stack}.c "$softfloat/build/softfloat.a" -o "$tmp/check.exe"
     run "$work/stdin.bin" "$work/translated" "$tmp/check$suffix" "$work/image.bin"
     compare_result "$work/translated" "$oracle"
     python3 corpus/m1/check_pe_console_output.py "$name" "$work/translated"

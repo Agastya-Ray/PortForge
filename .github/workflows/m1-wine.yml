@@ -10,6 +10,7 @@ on:
       - "corpus/m1/check_pe_console*"
       - "corpus/m1/prepare_softfloat.sh"
       - "corpus/m1/x87_program_oracle.py"
+      - "corpus/m1/wine_tls.c"
       - "corpus/m1/build_pe_console_msvc.cmd"
       - "corpus/m1/pe-import.s"
       - "corpus/m1/pe_import_fixture.py"

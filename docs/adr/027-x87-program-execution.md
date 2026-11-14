@@ -32,3 +32,12 @@ unmasked exception dispatch, threads or complete M1 acceptance.
 
 References: [Windows x64 floating-point calling convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention#fpcsr),
 [Intel instruction reference, volume 2](https://cdrdv2-public.intel.com/782156/325383-sdm-vol-2abcd.pdf).
+
+Hosted ARM64 linking exposed missing `_tls_index` support in the Wine PE
+startup. Supply a standard PE TLS directory and template boundaries for
+constant-initialized C thread-local scalars. The Windows loader assigns the
+index and copies the template for every thread. A native-Wine four-thread
+barrier test checks initial values, concurrent isolation and unchanged main
+thread state before the numerical corpus runs. TLS remains enabled.
+
+[Microsoft PE TLS directory format](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#the-tls-section).
