@@ -12,6 +12,7 @@ enum pf_pe_status {
     PF_PE_UNSUPPORTED_IMPORT,
     PF_PE_EXITED,
     PF_PE_CONTINUE,
+    PF_PE_INTEGER_FAULT,
 };
 
 struct pf_pe_import {

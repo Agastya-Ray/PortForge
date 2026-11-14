@@ -374,6 +374,7 @@ enum pf_pe_status pf_pe_run_bound(struct pf_state *state, uint64_t stop_rip, siz
     for (;;) {
         if (state->memory_fault != PF_MEM_OK) return PF_PE_MEMORY_FAULT;
         if (state->x87_unsupported) return PF_PE_X87_UNSUPPORTED;
+        if (state->integer_fault != PF_INT_OK) return PF_PE_INTEGER_FAULT;
         if (state->pe_exited) return PF_PE_EXITED;
         if (state->rip == stop_rip) return PF_PE_RETURNED;
         if (!fuel) return PF_PE_BUDGET;

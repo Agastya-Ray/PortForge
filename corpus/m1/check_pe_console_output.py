@@ -32,6 +32,19 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         b = ((~b) + (low < product)) & mask
         a = (-low) & mask
         arithmetic.extend((a, b))
+    storage_bytes = bytes((((v + i + 3) & 0xff) ^ 0xa5) for i, v in enumerate((0, 1, 0x7f, 0x80, 0xfe, 0xff, 0x0a, 0x0d)))
+    storage_words = [~(v - 0x1234 - i) & 0xffff for i, v in enumerate((0, 1, 0x7fff, 0x8000, 0xfffe, 0xffff, 0x0a0d, 0x1234))]
+    division = []
+    a, b, value, divisor = 0xfedcba9876543211, 0x800000000000007f, -0x123456789abcdef, -7919
+    for _ in range(6):
+        quotient = abs(value) // abs(divisor)
+        if (value < 0) != (divisor < 0):
+            quotient = -quotient
+        remainder = value - quotient * divisor
+        division.extend((a // b, a % b, quotient & mask, remainder & mask))
+        a = (a * 0x4f1bbcdc + 0x91273) & mask
+        b = ((b - 0x1234) & mask) | 1
+        value = -(abs(value) // 3) if value < 0 else value // 3
     return {
         "text": (b"PortForge console\r\nsecond line\n", b"", 0),
         "count": (struct.pack("<8I", *words), b"", 0),
@@ -41,6 +54,8 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         "clock": (b"performance counter ok\n", b"", 0),
         "system": (b"system calls ok\n", b"", 0),
         "arithmetic": (struct.pack("<16Q", *arithmetic), b"", 0),
+        "storage": (storage_bytes + struct.pack("<8H", *storage_words), b"", 0),
+        "division": (struct.pack("<24Q", *division), b"", 0),
     }
 
 
