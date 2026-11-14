@@ -31,6 +31,22 @@ static const struct vector_case cases[] = {
     {"por", PF_POR, {pf_block_22, pf_block_23, pf_block_24}},
     {"pcmpeqd", PF_PCMPEQD, {pf_block_25, pf_block_26, pf_block_27}},
     {"pcmpgtd", PF_PCMPGTD, {pf_block_28, pf_block_29, pf_block_30}},
+    {"paddb", PF_PADDB, {pf_block_31, pf_block_32, pf_block_33}},
+    {"paddw", PF_PADDW, {pf_block_34, pf_block_35, pf_block_36}},
+    {"psubb", PF_PSUBB, {pf_block_37, pf_block_38, pf_block_39}},
+    {"psubw", PF_PSUBW, {pf_block_40, pf_block_41, pf_block_42}},
+    {"paddsb", PF_PADDSB, {pf_block_43, pf_block_44, pf_block_45}},
+    {"paddsw", PF_PADDSW, {pf_block_46, pf_block_47, pf_block_48}},
+    {"paddusb", PF_PADDUSB, {pf_block_49, pf_block_50, pf_block_51}},
+    {"paddusw", PF_PADDUSW, {pf_block_52, pf_block_53, pf_block_54}},
+    {"psubsb", PF_PSUBSB, {pf_block_55, pf_block_56, pf_block_57}},
+    {"psubsw", PF_PSUBSW, {pf_block_58, pf_block_59, pf_block_60}},
+    {"psubusb", PF_PSUBUSB, {pf_block_61, pf_block_62, pf_block_63}},
+    {"psubusw", PF_PSUBUSW, {pf_block_64, pf_block_65, pf_block_66}},
+    {"pmullw", PF_PMULLW, {pf_block_67, pf_block_68, pf_block_69}},
+    {"pmulhw", PF_PMULHW, {pf_block_70, pf_block_71, pf_block_72}},
+    {"pmulhuw", PF_PMULHUW, {pf_block_73, pf_block_74, pf_block_75}},
+    {"pmuludq", PF_PMULUDQ, {pf_block_76, pf_block_77, pf_block_78}},
 };
 
 #if defined(__x86_64__)
@@ -43,6 +59,22 @@ static struct pf_xmm native_reference(enum pf_packed_op operation, struct pf_xmm
     memcpy(&lhs, &a, sizeof(lhs));
     memcpy(&rhs, &b, sizeof(rhs));
     switch (operation) {
+    case PF_PADDB: RUN_NATIVE("paddb"); break;
+    case PF_PADDW: RUN_NATIVE("paddw"); break;
+    case PF_PSUBB: RUN_NATIVE("psubb"); break;
+    case PF_PSUBW: RUN_NATIVE("psubw"); break;
+    case PF_PADDSB: RUN_NATIVE("paddsb"); break;
+    case PF_PADDSW: RUN_NATIVE("paddsw"); break;
+    case PF_PADDUSB: RUN_NATIVE("paddusb"); break;
+    case PF_PADDUSW: RUN_NATIVE("paddusw"); break;
+    case PF_PSUBSB: RUN_NATIVE("psubsb"); break;
+    case PF_PSUBSW: RUN_NATIVE("psubsw"); break;
+    case PF_PSUBUSB: RUN_NATIVE("psubusb"); break;
+    case PF_PSUBUSW: RUN_NATIVE("psubusw"); break;
+    case PF_PMULLW: RUN_NATIVE("pmullw"); break;
+    case PF_PMULHW: RUN_NATIVE("pmulhw"); break;
+    case PF_PMULHUW: RUN_NATIVE("pmulhuw"); break;
+    case PF_PMULUDQ: RUN_NATIVE("pmuludq"); break;
     case PF_PXOR: RUN_NATIVE("pxor"); break;
     case PF_PAND: RUN_NATIVE("pand"); break;
     case PF_PANDN: RUN_NATIVE("pandn"); break;
@@ -84,6 +116,8 @@ static uint64_t verify_case(const struct vector_case *test, unsigned samples, ui
     static const uint64_t edge[] = {
         0, 1, UINT32_MAX, UINT64_C(1) << 32, UINT64_C(0x7fffffff80000000),
         UINT64_C(0x800000007fffffff), UINT64_MAX,
+        UINT64_C(0x7f807f807f807f80), UINT64_C(0x00ff01fe7fff8000),
+        UINT64_C(0x7fff80007fff8000), UINT64_C(0xffff0001ffff0001),
     };
     const unsigned edge_count = sizeof(edge) / sizeof(edge[0]);
     uint64_t seed = UINT64_C(0xae8d11932bc57c4f);
@@ -112,6 +146,7 @@ static uint64_t verify_case(const struct vector_case *test, unsigned samples, ui
             if (source != destination) {
                 state.xmm[source] = b;
             }
+            if (i & 1) state.pending = (struct pf_pending){UINT64_MAX, 1, 0, 64, PF_ADD};
             struct pf_state initial = state;
             test->blocks[encoding](&state);
             struct pf_xmm actual = state.xmm[destination];
@@ -131,7 +166,8 @@ static uint64_t verify_case(const struct vector_case *test, unsigned samples, ui
                     test->name, encoding, i, "unrelated XMM changed");
             require(memcmp(initial.gpr, state.gpr, sizeof(state.gpr)) == 0,
                     test->name, encoding, i, "general register changed");
-            require(state.rflags == rflags && pf_read_flags(&state) == rflags,
+            require(state.rflags == rflags && pf_read_flags(&state) == pf_read_flags(&initial)
+                        && memcmp(&state.pending, &initial.pending, sizeof(state.pending)) == 0,
                     test->name, encoding, i, "flags changed");
             require(state.rip == rip + (encoding == 1 ? 5 : 4),
                     test->name, encoding, i, "RIP differs");

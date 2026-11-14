@@ -54,9 +54,9 @@ exports. [ADR-001](adr/001-ir-choice.md) selects PFIR as the primary
 translator, with Remill retained for comparison. Full instruction coverage
 and the broader program corpus remain M1 acceptance work.
 
-Ten console fixtures now cover text and binary output, helper calls,
+Eleven console fixtures now cover text and binary output, helper calls,
 standard input, performance counters, system services, and integer
-arithmetic, byte/word storage, and division. Clang, MinGW and MSVC originals are compared with translated
+arithmetic, byte/word storage, division, and vector arithmetic. Clang, MinGW and MSVC originals are compared with translated
 execution. [ADR-023](adr/023-integer-products-and-carry.md) records the new
 32/64-bit products and carry-chain semantics and their native/ARM64 corpus.
 Threads, exceptions and runtime-generated code still need their planned
@@ -66,3 +66,7 @@ acceptance evidence; this fixture expansion does not complete M1.
 division. Divide-by-zero and quotient overflow return an explicit arithmetic
 fault with the failing RIP preserved. This records a guest error; dispatch to
 Windows SEH or C++ exception handlers remains outside this runner.
+
+[ADR-026](adr/026-sse2-byte-word-lanes.md) expands SSE2 packed arithmetic to
+26 operations, with native x86, Remill, portable ARM64 and NEON comparisons.
+Legacy XMM memory sources retain checked alignment and whole-span rules.

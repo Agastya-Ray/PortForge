@@ -45,6 +45,36 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         a = (a * 0x4f1bbcdc + 0x91273) & mask
         b = ((b - 0x1234) & mask) | 1
         value = -(abs(value) // 3) if value < 0 else value // 3
+    vector_a = struct.pack("<2Q", 0x7fff8000ff007f80, 0xffff00017ffe8001)
+    vector_b = struct.pack("<2Q", 0x0001ffff0101807f, 0x80007fff0001ffff)
+
+    def lanes(width, signed, operation, saturated=False):
+        output = bytearray()
+        count = width // 8
+        lower = -(1 << (width - 1)) if signed else 0
+        upper = (1 << (width - int(signed))) - 1
+        for offset in range(0, 16, count):
+            left = int.from_bytes(vector_a[offset:offset+count], "little", signed=signed)
+            right = int.from_bytes(vector_b[offset:offset+count], "little", signed=signed)
+            result = operation(left, right)
+            if saturated:
+                result = max(lower, min(upper, result))
+            output += (result & ((1 << width) - 1)).to_bytes(count, "little")
+        return bytes(output)
+
+    vectors = b""
+    for operation in (lambda a, b: a + b, lambda a, b: a - b):
+        for width in (8, 16):
+            vectors += lanes(width, False, operation)
+    for operation in (lambda a, b: a + b, lambda a, b: a - b):
+        for signed in (True, False):
+            for width in (8, 16):
+                vectors += lanes(width, signed, operation, saturated=True)
+    vectors += lanes(16, False, lambda a, b: a * b)
+    vectors += lanes(16, True, lambda a, b: (a * b) >> 16)
+    vectors += lanes(16, False, lambda a, b: (a * b) >> 16)
+    left, right = struct.unpack("<4I", vector_a), struct.unpack("<4I", vector_b)
+    vectors += struct.pack("<2Q", *(left[i] * right[i] for i in (0, 2)))
     return {
         "text": (b"PortForge console\r\nsecond line\n", b"", 0),
         "count": (struct.pack("<8I", *words), b"", 0),
@@ -56,6 +86,7 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         "arithmetic": (struct.pack("<16Q", *arithmetic), b"", 0),
         "storage": (storage_bytes + struct.pack("<8H", *storage_words), b"", 0),
         "division": (struct.pack("<24Q", *division), b"", 0),
+        "vectors": (vectors, b"", 0),
     }
 
 

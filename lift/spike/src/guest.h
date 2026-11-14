@@ -18,7 +18,7 @@ struct pf_xmm {
 
 _Static_assert(sizeof(struct pf_xmm) == 16, "XMM layout");
 
-enum pf_packed_op { PF_PXOR, PF_PADDD, PF_PADDQ, PF_PSUBD, PF_PSUBQ, PF_PAND, PF_PANDN, PF_POR, PF_PCMPEQD, PF_PCMPGTD };
+enum pf_packed_op { PF_PXOR, PF_PADDD, PF_PADDQ, PF_PSUBD, PF_PSUBQ, PF_PAND, PF_PANDN, PF_POR, PF_PCMPEQD, PF_PCMPGTD, PF_PADDB, PF_PADDW, PF_PSUBB, PF_PSUBW, PF_PADDSB, PF_PADDSW, PF_PADDUSB, PF_PADDUSW, PF_PSUBSB, PF_PSUBSW, PF_PSUBUSB, PF_PSUBUSW, PF_PMULLW, PF_PMULHW, PF_PMULHUW, PF_PMULUDQ };
 
 enum pf_arithmetic { PF_NO_FLAGS, PF_ADD, PF_SUB, PF_LOGIC, PF_INC, PF_DEC, PF_ADC, PF_SBB, PF_IMUL };
 
@@ -243,6 +243,39 @@ static inline void pf_shift_scalar(struct pf_state *state, unsigned reg, unsigne
     state->pending.operation = PF_NO_FLAGS;
 }
 
+static inline uint64_t pf_packed_small_lanes(enum pf_packed_op op, uint64_t a, uint64_t b) {
+    if (op == PF_PMULUDQ) return (uint64_t)(uint32_t)a * (uint32_t)b;
+    bool bytes = op == PF_PADDB || op == PF_PSUBB || op == PF_PADDSB || op == PF_PADDUSB || op == PF_PSUBSB || op == PF_PSUBUSB;
+    unsigned width = bytes ? 8 : 16;
+    uint32_t mask = (UINT32_C(1) << width) - 1, sign = UINT32_C(1) << (width - 1);
+    uint64_t result = 0;
+    for (unsigned shift = 0; shift < 64; shift += width) {
+        uint32_t x = (uint32_t)(a >> shift) & mask, y = (uint32_t)(b >> shift) & mask, value = 0;
+        int32_t sx = (int32_t)(x ^ sign) - (int32_t)sign;
+        int32_t sy = (int32_t)(y ^ sign) - (int32_t)sign;
+        switch (op) {
+        case PF_PADDB: case PF_PADDW: value = x + y; break;
+        case PF_PSUBB: case PF_PSUBW: value = x - y; break;
+        case PF_PADDUSB: case PF_PADDUSW: value = x + y > mask ? mask : x + y; break;
+        case PF_PSUBUSB: case PF_PSUBUSW: value = x < y ? 0 : x - y; break;
+        case PF_PADDSB: case PF_PADDSW: case PF_PSUBSB: case PF_PSUBSW: {
+            int32_t sum = op == PF_PADDSB || op == PF_PADDSW ? sx + sy : sx - sy;
+            int32_t minimum = -(int32_t)sign, maximum = (int32_t)sign - 1;
+            if (sum < minimum) sum = minimum;
+            if (sum > maximum) sum = maximum;
+            value = (uint32_t)sum;
+            break;
+        }
+        case PF_PMULLW: value = x * y; break;
+        case PF_PMULHUW: value = (x * y) >> 16; break;
+        case PF_PMULHW: value = (uint32_t)(sx * sy) >> 16; break;
+        default: break;
+        }
+        result |= (uint64_t)(value & mask) << shift;
+    }
+    return result;
+}
+
 static inline struct pf_xmm pf_packed(enum pf_packed_op op, struct pf_xmm a, struct pf_xmm b) {
     struct pf_xmm result = {0};
 #if defined(__aarch64__) && !defined(PF_PORTABLE_ONLY)
@@ -250,6 +283,34 @@ static inline struct pf_xmm pf_packed(enum pf_packed_op op, struct pf_xmm a, str
     uint64x2_t rhs = vld1q_u64(b.qword);
     uint64x2_t value = vdupq_n_u64(0);
     switch (op) {
+    case PF_PADDB: value = vreinterpretq_u64_u8(vaddq_u8(vreinterpretq_u8_u64(lhs), vreinterpretq_u8_u64(rhs))); break;
+    case PF_PADDW: value = vreinterpretq_u64_u16(vaddq_u16(vreinterpretq_u16_u64(lhs), vreinterpretq_u16_u64(rhs))); break;
+    case PF_PSUBB: value = vreinterpretq_u64_u8(vsubq_u8(vreinterpretq_u8_u64(lhs), vreinterpretq_u8_u64(rhs))); break;
+    case PF_PSUBW: value = vreinterpretq_u64_u16(vsubq_u16(vreinterpretq_u16_u64(lhs), vreinterpretq_u16_u64(rhs))); break;
+    case PF_PADDSB: value = vreinterpretq_u64_s8(vqaddq_s8(vreinterpretq_s8_u64(lhs), vreinterpretq_s8_u64(rhs))); break;
+    case PF_PADDSW: value = vreinterpretq_u64_s16(vqaddq_s16(vreinterpretq_s16_u64(lhs), vreinterpretq_s16_u64(rhs))); break;
+    case PF_PADDUSB: value = vreinterpretq_u64_u8(vqaddq_u8(vreinterpretq_u8_u64(lhs), vreinterpretq_u8_u64(rhs))); break;
+    case PF_PADDUSW: value = vreinterpretq_u64_u16(vqaddq_u16(vreinterpretq_u16_u64(lhs), vreinterpretq_u16_u64(rhs))); break;
+    case PF_PSUBSB: value = vreinterpretq_u64_s8(vqsubq_s8(vreinterpretq_s8_u64(lhs), vreinterpretq_s8_u64(rhs))); break;
+    case PF_PSUBSW: value = vreinterpretq_u64_s16(vqsubq_s16(vreinterpretq_s16_u64(lhs), vreinterpretq_s16_u64(rhs))); break;
+    case PF_PSUBUSB: value = vreinterpretq_u64_u8(vqsubq_u8(vreinterpretq_u8_u64(lhs), vreinterpretq_u8_u64(rhs))); break;
+    case PF_PSUBUSW: value = vreinterpretq_u64_u16(vqsubq_u16(vreinterpretq_u16_u64(lhs), vreinterpretq_u16_u64(rhs))); break;
+    case PF_PMULLW: value = vreinterpretq_u64_u16(vmulq_u16(vreinterpretq_u16_u64(lhs), vreinterpretq_u16_u64(rhs))); break;
+    case PF_PMULHUW: {
+        uint16x8_t a16 = vreinterpretq_u16_u64(lhs), b16 = vreinterpretq_u16_u64(rhs);
+        uint32x4_t low = vmull_u16(vget_low_u16(a16), vget_low_u16(b16));
+        uint32x4_t high = vmull_high_u16(a16, b16);
+        value = vreinterpretq_u64_u16(vcombine_u16(vshrn_n_u32(low, 16), vshrn_n_u32(high, 16)));
+        break;
+    }
+    case PF_PMULHW: {
+        int16x8_t a16 = vreinterpretq_s16_u64(lhs), b16 = vreinterpretq_s16_u64(rhs);
+        int32x4_t low = vmull_s16(vget_low_s16(a16), vget_low_s16(b16));
+        int32x4_t high = vmull_high_s16(a16, b16);
+        value = vreinterpretq_u64_s16(vcombine_s16(vshrn_n_s32(low, 16), vshrn_n_s32(high, 16)));
+        break;
+    }
+    case PF_PMULUDQ: value = vmull_u32(vmovn_u64(lhs), vmovn_u64(rhs)); break;
     case PF_PXOR: value = veorq_u64(lhs, rhs); break;
     case PF_PAND: value = vandq_u64(lhs, rhs); break;
     case PF_PANDN: value = vbicq_u64(rhs, lhs); break;
@@ -277,6 +338,23 @@ static inline struct pf_xmm pf_packed(enum pf_packed_op op, struct pf_xmm a, str
         uint64_t lhs = a.qword[i];
         uint64_t rhs = b.qword[i];
         switch (op) {
+        case PF_PADDB:
+        case PF_PADDW:
+        case PF_PSUBB:
+        case PF_PSUBW:
+        case PF_PADDSB:
+        case PF_PADDSW:
+        case PF_PADDUSB:
+        case PF_PADDUSW:
+        case PF_PSUBSB:
+        case PF_PSUBSW:
+        case PF_PSUBUSB:
+        case PF_PSUBUSW:
+        case PF_PMULLW:
+        case PF_PMULHW:
+        case PF_PMULHUW:
+        case PF_PMULUDQ:
+            result.qword[i] = pf_packed_small_lanes(op, lhs, rhs); break;
         case PF_PXOR: result.qword[i] = lhs ^ rhs; break;
         case PF_PAND: result.qword[i] = lhs & rhs; break;
         case PF_PANDN: result.qword[i] = ~lhs & rhs; break;
