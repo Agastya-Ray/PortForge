@@ -5,8 +5,8 @@ pub use pe::{PeDecodeError, PeDecoder};
 use std::fmt;
 use zydis::{AllOperands, StackWidth, Status};
 
-pub use zydis::ffi::{DecodedOperandKind, MemoryInfo};
-pub use zydis::{MachineMode, Mnemonic, Register, RegisterClass};
+pub use zydis::ffi::{DecodedOperand, DecodedOperandKind, MemoryInfo};
+pub use zydis::{InstructionAttributes, MachineMode, Mnemonic, Register, RegisterClass};
 
 pub type Instruction = zydis::Instruction<AllOperands>;
 

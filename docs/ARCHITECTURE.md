@@ -54,9 +54,9 @@ exports. [ADR-001](adr/001-ir-choice.md) selects PFIR as the primary
 translator, with Remill retained for comparison. Full instruction coverage
 and the broader program corpus remain M1 acceptance work.
 
-Eight console fixtures now cover text and binary output, helper calls,
+Nine console fixtures now cover text and binary output, helper calls,
 standard input, performance counters, system services, and integer
-arithmetic. Clang, MinGW and MSVC originals are compared with translated
+arithmetic, and byte/word storage. Clang, MinGW and MSVC originals are compared with translated
 execution. [ADR-023](adr/023-integer-products-and-carry.md) records the new
 32/64-bit products and carry-chain semantics and their native/ARM64 corpus.
 Threads, exceptions and runtime-generated code still need their planned
