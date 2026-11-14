@@ -15,6 +15,10 @@ evidence. Work proceeds M1, then M2, then M3. Each gate requires reproducible ar
 | Floating-point compiler programs execute correctly | This unit adds finite x87 division and control/status transfer. SSE2 floating-point state and operations needed by the corpus remain open. |
 | The IR decision is recorded and merged | ADR001 selects PFIR. PR30 merged the correctness/size/timing decision evidence. Remill remains a comparison backend. |
 
+The [PR39 native/ARM64 reference comparison](https://github.com/Agastya-Ray/PortForge/actions/runs/43618761015)
+and [compiler-program Windows/Wine/ARM64 results](https://github.com/Agastya-Ray/PortForge/actions/runs/43618761026)
+are immutable examples of the existing evidence at that source revision.
+
 The next substantial implementation units are x87 program integration,
 callback-capable imports and real threads, guest exception handling, and the
 remaining numerical operations used by the tier-2 corpus. Each unit needs

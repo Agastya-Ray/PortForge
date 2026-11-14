@@ -23,7 +23,7 @@ set "WORK=%EVIDENCE%\%NAME%"
 if not exist "%WORK%" mkdir "%WORK%" || exit /b 1
 set "EXTRA="
 if "%NAME%"=="x87" (
-    set "EXTRA=%WORK%\x87.obj"
+    set EXTRA="%WORK%\x87.obj"
 )
 for %%b in (guest repeated) do (
     if "%NAME%"=="x87" ml64.exe /nologo /c /Fo"%WORK%\x87.obj" corpus\m1\pe-console-x87.asm || exit /b 1
