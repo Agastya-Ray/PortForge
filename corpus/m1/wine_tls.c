@@ -5,7 +5,9 @@
 #include "softfloat.h"
 
 struct task { HANDLE ready, start; unsigned id; };
-static DWORD WINAPI worker(void *argument) {
+/* Keep ELF TLS lowering in the ordinary C ABI. GCC Wine callbacks use
+ * ms_abi, whose TLS lowering can otherwise reuse RSI/RDI incorrectly. */
+static __attribute__((noinline)) DWORD thread_body(void *argument) {
     const struct task *task=argument;
     DWORD result=0;
     if(extF80_roundingPrecision!=80 || softfloat_roundingMode!=softfloat_round_near_even || softfloat_exceptionFlags!=0 || softfloat_detectTininess!=softfloat_tininess_afterRounding) result=1;
@@ -16,6 +18,10 @@ static DWORD WINAPI worker(void *argument) {
     if(!SetEvent(task->ready) || WaitForSingleObject(task->start,5000)!=WAIT_OBJECT_0) return 2;
     if(extF80_roundingPrecision!=32+task->id || softfloat_roundingMode!=10+task->id || softfloat_exceptionFlags!=20+task->id || softfloat_detectTininess!=40+task->id) result=3;
     return result;
+}
+
+static DWORD WINAPI worker(void *argument) {
+    return thread_body(argument);
 }
 
 int main(void) {

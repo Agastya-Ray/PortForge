@@ -41,3 +41,9 @@ barrier test checks initial values, concurrent isolation and unchanged main
 thread state before the numerical corpus runs. TLS remains enabled.
 
 [Microsoft PE TLS directory format](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#the-tls-section).
+
+The concurrent x86 Wine check also exposed incorrect GCC TLS register
+lowering inside an ms_abi callback. Disassembly showed a TLS descriptor
+replacing a live pointer in RDI. Keep the Windows callback as a thin ABI
+bridge and access C TLS in a non-inlined ordinary C helper, matching the
+SoftFloat backend's own ABI. All four TLS scalars remain tested concurrently.
