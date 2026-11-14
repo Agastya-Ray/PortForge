@@ -24,6 +24,14 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
     calls = struct.pack(
         "<2Q", (((a + b) ^ (c - d)) + e) & mask, (((e + d) ^ (c - b)) + a) & mask
     )
+    a, b = 0xFEDCBA9876543211, 0x800000000000007F
+    arithmetic = []
+    for _ in range(8):
+        product = (a * b) & mask
+        low = (product + a) & mask
+        b = ((~b) + (low < product)) & mask
+        a = (-low) & mask
+        arithmetic.extend((a, b))
     return {
         "text": (b"PortForge console\r\nsecond line\n", b"", 0),
         "count": (struct.pack("<8I", *words), b"", 0),
@@ -32,6 +40,7 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         "input": (INPUT_BYTES, b"", 0),
         "clock": (b"performance counter ok\n", b"", 0),
         "system": (b"system calls ok\n", b"", 0),
+        "arithmetic": (struct.pack("<16Q", *arithmetic), b"", 0),
     }
 
 

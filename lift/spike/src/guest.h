@@ -20,7 +20,7 @@ _Static_assert(sizeof(struct pf_xmm) == 16, "XMM layout");
 
 enum pf_packed_op { PF_PXOR, PF_PADDD, PF_PADDQ, PF_PSUBD, PF_PSUBQ, PF_PAND, PF_PANDN, PF_POR, PF_PCMPEQD, PF_PCMPGTD };
 
-enum pf_arithmetic { PF_NO_FLAGS, PF_ADD, PF_SUB, PF_LOGIC, PF_INC, PF_DEC };
+enum pf_arithmetic { PF_NO_FLAGS, PF_ADD, PF_SUB, PF_LOGIC, PF_INC, PF_DEC, PF_ADC, PF_SBB, PF_IMUL };
 
 struct pf_pending {
     uint64_t lhs, rhs, result;
@@ -150,11 +150,20 @@ uint64_t pf_read_flags(const struct pf_state *state) {
     uint64_t sign = UINT64_C(1) << (flags->width - 1);
     unsigned carry = 0, overflow = 0;
     uint64_t auxiliary = state->rflags & UINT64_C(0x10);
-    if (flags->operation == PF_ADD || flags->operation == PF_INC) {
-        carry = result < lhs;
+    if (flags->operation == PF_IMUL) {
+        uint64_t mask = flags->width == 64 ? UINT64_MAX : UINT32_MAX;
+        bool negative = ((lhs ^ rhs) & sign) != 0;
+        uint64_t a = (lhs & sign) ? (0 - lhs) & mask : lhs;
+        uint64_t b = (rhs & sign) ? (0 - rhs) & mask : rhs;
+        uint64_t limit = sign - !negative;
+        bool truncated = b != 0 && a > limit / b;
+        return (state->rflags & ~UINT64_C(0x801)) | (truncated ? UINT64_C(0x801) : 0);
+    }
+    if (flags->operation == PF_ADD || flags->operation == PF_INC || flags->operation == PF_ADC) {
+        carry = result < lhs || (flags->operation == PF_ADC && (state->rflags & 1) && result == lhs);
         overflow = (~(lhs ^ rhs) & (lhs ^ result) & sign) != 0;
-    } else if (flags->operation == PF_SUB || flags->operation == PF_DEC) {
-        carry = lhs < rhs;
+    } else if (flags->operation == PF_SUB || flags->operation == PF_DEC || flags->operation == PF_SBB) {
+        carry = lhs < rhs || (flags->operation == PF_SBB && (state->rflags & 1) && lhs == rhs);
         overflow = ((lhs ^ rhs) & (lhs ^ result) & sign) != 0;
     }
     if (flags->operation == PF_INC || flags->operation == PF_DEC) carry = state->rflags & 1;
