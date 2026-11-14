@@ -54,8 +54,8 @@ int main(int argc, char **argv) {
     enum pf_pe_status status = pf_pe_run_bound(&state, stop, PF_INSTRUCTION_BUDGET, bindings, pf_pe_import_count);
     if (status == PF_PE_EXITED) result = (int)state.pe_exit_code;
     else if (status == PF_PE_RETURNED) result = (int)(uint32_t)state.gpr[0];
-    else fprintf(stderr, "PortForge guest stopped at 0x%llx (status %d, memory fault %d at 0x%llx)\n",
-        (unsigned long long)state.rip, status, state.memory_fault, (unsigned long long)state.fault_address);
+    else fprintf(stderr, "PortForge guest stopped at 0x%llx (status %d, memory fault %d at 0x%llx, integer fault %d)\n",
+        (unsigned long long)state.rip, status, state.memory_fault, (unsigned long long)state.fault_address, state.integer_fault);
 done:
     pf_wine_close(&api);
     free(bindings);

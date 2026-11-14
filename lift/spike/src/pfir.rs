@@ -290,6 +290,7 @@ pub enum Effect {
         address: Address,
         width: Width,
     },
+    WideInteger(crate::integer_wide::WideInteger),
     AdvanceRip(u8),
 }
 
@@ -414,6 +415,14 @@ fn lift_decoded(
                 },
                 Effect::AdvanceRip(length),
             ]);
+            offset += usize::from(length);
+            continue;
+        }
+        if let Some(wide) = crate::integer_wide::decode(&instruction) {
+            effects.push(Effect::WideInteger(
+                wide.map_err(|e| format!("{e} at offset {offset}"))?,
+            ));
+            effects.push(Effect::AdvanceRip(length));
             offset += usize::from(length);
             continue;
         }
@@ -1148,6 +1157,7 @@ fn lift_decoded(
 pub fn emit_c(block: &[Effect], source: &mut String) {
     for effect in block {
         match *effect {
+            Effect::WideInteger(ref instruction) => crate::integer_wide::emit(instruction, source),
             Effect::ScalarStorage(ref instruction) => {
                 crate::scalar_storage::emit(instruction, source)
             }
@@ -1463,8 +1473,7 @@ mod tests {
     #[test]
     fn integer_expansion_rejects_implicit_products_and_unsupported_storage() {
         for bytes in [
-            &[0xf7, 0xe9][..],               // IMUL ECX, implicit EDX:EAX
-            &[0x48, 0xf7, 0xe9],             // IMUL RCX, implicit RDX:RAX
+            &[0x66, 0x0f, 0xaf, 0xc1][..],   // IMUL ECX, implicit EDX:EAX
             &[0x66, 0x0f, 0xaf, 0xc1],       // IMUL AX, CX
             &[0x66, 0x6b, 0xc1, 0xff],       // IMUL AX, CX, -1
             &[0x10, 0xc8],                   // ADC AL, CL

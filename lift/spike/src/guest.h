@@ -28,6 +28,8 @@ struct pf_pending {
     enum pf_arithmetic operation;
 };
 
+enum pf_integer_fault { PF_INT_OK, PF_INT_DIVIDE_ZERO, PF_INT_DIVIDE_OVERFLOW };
+
 struct pf_state {
     uint64_t gpr[16];
     struct pf_xmm xmm[16];
@@ -36,6 +38,7 @@ struct pf_state {
     struct pf_memory memory;
     enum pf_memory_fault memory_fault;
     uint64_t fault_address;
+    enum pf_integer_fault integer_fault;
     uint64_t rip, rflags;
     struct pf_pending pending;
     bool pe_exited;
