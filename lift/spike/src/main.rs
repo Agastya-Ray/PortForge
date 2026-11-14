@@ -3,6 +3,7 @@ mod integer_wide;
 mod pfir;
 mod program;
 mod scalar_storage;
+mod x87_control;
 
 use std::fmt::Write;
 use std::io::{self, Write as _};

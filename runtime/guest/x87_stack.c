@@ -137,8 +137,13 @@ bool pf_x87_execute(struct pf_x87_state *state, enum pf_x87_op op,
     case PF_FSUBR:
     case PF_FSUBRP:
     case PF_FMUL:
-    case PF_FMULP: {
-        bool pops = op == PF_FADDP || op == PF_FSUBP || op == PF_FSUBRP || op == PF_FMULP;
+    case PF_FMULP:
+    case PF_FDIV:
+    case PF_FDIVP:
+    case PF_FDIVR:
+    case PF_FDIVRP: {
+        bool pops = op == PF_FADDP || op == PF_FSUBP || op == PF_FSUBRP || op == PF_FMULP
+            || op == PF_FDIVP || op == PF_FDIVRP;
         if (destination >= 8 || source >= 8
             || (pops ? source != 0 : (source != 0 && destination != 0))) {
             return false;
@@ -153,7 +158,8 @@ bool pf_x87_execute(struct pf_x87_state *state, enum pf_x87_op op,
             enum pf_x87_binary_op operation = PF_X87_SUBTRACT;
             if (op == PF_FADD || op == PF_FADDP) operation = PF_X87_ADD;
             if (op == PF_FMUL || op == PF_FMULP) operation = PF_X87_MULTIPLY;
-            bool reversed = op == PF_FSUBR || op == PF_FSUBRP;
+            if (op == PF_FDIV || op == PF_FDIVP || op == PF_FDIVR || op == PF_FDIVRP) operation = PF_X87_DIVIDE;
+            bool reversed = op == PF_FSUBR || op == PF_FSUBRP || op == PF_FDIVR || op == PF_FDIVRP;
             if (!pf_x87_binary(operation, reversed ? b : a, reversed ? a : b, state->control, &result)) {
                 return false;
             }

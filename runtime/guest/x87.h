@@ -27,7 +27,7 @@ struct pf_x87_result {
     uint16_t status;
 };
 
-enum pf_x87_binary_op { PF_X87_ADD, PF_X87_SUBTRACT, PF_X87_MULTIPLY };
+enum pf_x87_binary_op { PF_X87_ADD, PF_X87_SUBTRACT, PF_X87_MULTIPLY, PF_X87_DIVIDE };
 
 /* Compute a binary operation for canonical finite inputs. The caller handles traps and stack state.
  * False means an unsupported operation, input or precision, with result left unchanged. */
@@ -48,6 +48,7 @@ struct pf_x87_state {
 enum pf_x87_op {
     PF_FLD1, PF_FLDZ, PF_FCHS, PF_FABS, PF_FADD, PF_FADDP,
     PF_FSUB, PF_FSUBP, PF_FSUBR, PF_FSUBRP, PF_FMUL, PF_FMULP,
+    PF_FDIV, PF_FDIVP, PF_FDIVR, PF_FDIVRP,
 };
 
 static inline bool pf_x87_available(const struct pf_x87_state *state) {

@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 import struct
 import subprocess
+from x87_program_oracle import x87_output
 
 
 INPUT_BYTES = bytes.fromhex("00 50 46 0d 0a 1a ff 00 0a")
@@ -87,6 +88,7 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         "storage": (storage_bytes + struct.pack("<8H", *storage_words), b"", 0),
         "division": (struct.pack("<24Q", *division), b"", 0),
         "vectors": (vectors, b"", 0),
+        "x87": (x87_output(), b"", 0),
     }
 
 

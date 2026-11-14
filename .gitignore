@@ -2,3 +2,5 @@
 /manifest.json
 /report.json
 /evidence/
+
+__pycache__/

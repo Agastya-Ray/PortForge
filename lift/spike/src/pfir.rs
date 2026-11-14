@@ -152,6 +152,10 @@ pub enum X87 {
     ReverseSubtractPop,
     Multiply,
     MultiplyPop,
+    Divide,
+    DividePop,
+    ReverseDivide,
+    ReverseDividePop,
 }
 
 impl X87 {
@@ -169,6 +173,10 @@ impl X87 {
             Self::ReverseSubtractPop => "PF_FSUBRP",
             Self::Multiply => "PF_FMUL",
             Self::MultiplyPop => "PF_FMULP",
+            Self::Divide => "PF_FDIV",
+            Self::DividePop => "PF_FDIVP",
+            Self::ReverseDivide => "PF_FDIVR",
+            Self::ReverseDividePop => "PF_FDIVRP",
         }
     }
 }
@@ -207,6 +215,7 @@ fn narrow_register(reg: Register) -> NarrowLocation {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Effect {
     ScalarStorage(crate::scalar_storage::ScalarStorage),
+    X87Control(crate::x87_control::Control),
     ExtendNarrow {
         into: Value,
         source: NarrowLocation,
@@ -548,6 +557,11 @@ fn lift_decoded(
                 _ => return Err(unsupported()),
             }
             effects.push(Effect::AdvanceRip(length));
+            offset += usize::from(length);
+            continue;
+        }
+        if let Some(control) = crate::x87_control::lift(&instruction)? {
+            effects.extend([Effect::X87Control(control), Effect::AdvanceRip(length)]);
             offset += usize::from(length);
             continue;
         }
@@ -920,6 +934,10 @@ fn lift_decoded(
             Mnemonic::FSUBRP => Operation::X87(X87::ReverseSubtractPop),
             Mnemonic::FMUL => Operation::X87(X87::Multiply),
             Mnemonic::FMULP => Operation::X87(X87::MultiplyPop),
+            Mnemonic::FDIV => Operation::X87(X87::Divide),
+            Mnemonic::FDIVP => Operation::X87(X87::DividePop),
+            Mnemonic::FDIVR => Operation::X87(X87::ReverseDivide),
+            Mnemonic::FDIVRP => Operation::X87(X87::ReverseDividePop),
             mnemonic => {
                 return Err(format!(
                     "decoded {mnemonic} at offset {offset}; no lift available"
@@ -942,7 +960,11 @@ fn lift_decoded(
                     | X87::ReverseSubtract
                     | X87::ReverseSubtractPop
                     | X87::Multiply
-                    | X87::MultiplyPop,
+                    | X87::MultiplyPop
+                    | X87::Divide
+                    | X87::DividePop
+                    | X87::ReverseDivide
+                    | X87::ReverseDividePop,
                     [destination, source],
                 ) => {
                     let (DecodedOperandKind::Reg(destination), DecodedOperandKind::Reg(source)) =
@@ -1444,6 +1466,7 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
             } => {
                 writeln!(source, "    state->xmm[{register}] = v{id};").unwrap();
             }
+            Effect::X87Control(ref control) => crate::x87_control::emit(control, source),
             Effect::X87 {
                 operation,
                 destination,

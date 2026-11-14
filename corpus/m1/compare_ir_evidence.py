@@ -51,7 +51,7 @@ def summarize(reference: Path, arm: Path) -> dict:
             raise ValueError(f"{suite} backend results disagree")
         evidence[suite] = digests[0]
     evidence["x87_add"] = verify_pair(reference, arm, "x87-add.json", "samples_per_control", 100000, {"control_combinations": 12})
-    evidence["x87_stack"] = verify_pair(reference, arm, "x87-stack.json", "samples_per_encoding", 1000000, {"encodings": 9})
+    evidence["x87_stack"] = verify_pair(reference, arm, "x87-stack.json", "samples_per_encoding", 1000000, {"encodings": 25})
 
     timings, benchmark_digests, block_counts = {}, set(), set()
     for backend in ("pfir", "remill"):

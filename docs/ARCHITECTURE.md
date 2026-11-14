@@ -54,7 +54,7 @@ exports. [ADR-001](adr/001-ir-choice.md) selects PFIR as the primary
 translator, with Remill retained for comparison. Full instruction coverage
 and the broader program corpus remain M1 acceptance work.
 
-Eleven console fixtures now cover text and binary output, helper calls,
+Twelve console fixtures now cover text and binary output, helper calls,
 standard input, performance counters, system services, and integer
 arithmetic, byte/word storage, division, and vector arithmetic. Clang, MinGW and MSVC originals are compared with translated
 execution. [ADR-023](adr/023-integer-products-and-carry.md) records the new
@@ -70,3 +70,9 @@ Windows SEH or C++ exception handlers remains outside this runner.
 [ADR-026](adr/026-sse2-byte-word-lanes.md) expands SSE2 packed arithmetic to
 26 operations, with native x86, Remill, portable ARM64 and NEON comparisons.
 Legacy XMM memory sources retain checked alignment and whole-span rules.
+
+[ADR-027](adr/027-x87-program-execution.md) closes the x87 PE runner integration
+gap, initializes the Windows x64 floating-point control state and links the
+pinned SoftFloat backend for the actual Wine host ABI. The numerical fixture
+checks exact division results and control/status words across all 12 precision
+and rounding combinations. Thread and guest exception acceptance remain open.

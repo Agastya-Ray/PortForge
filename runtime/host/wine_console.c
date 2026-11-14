@@ -43,6 +43,7 @@ int main(int argc, char **argv) {
     pf_write_le64(memory + (rsp - base), stop);
     struct pf_state state = {
         .gpr = {[4] = rsp}, .rip = PF_PE_ENTRY, .rflags = 2,
+        .x87 = {.control = 0x027f},
         .memory = {memory, base, size, true},
     };
     struct pf_pe_bind_result bind = pf_pe_bind_imports(&state, api.exports, PF_WINE_EXPORT_COUNT,

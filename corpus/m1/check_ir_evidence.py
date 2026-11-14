@@ -15,7 +15,7 @@ def fixtures(native: bool) -> dict:
         result[f"{prefix}arithmetic.json"] = dict(common, backend=backend, samples_per_instruction_width=1000000, instruction_width_pairs=6, encodings_per_pair=3, three_instruction_samples=1000000)
         result[f"{prefix}sse2.json"] = dict(common, backend=backend, samples_per_operation=1000000, operations=26, encodings_per_operation=3)
     result["x87-add.json"] = dict(common, samples_per_control=100000, control_combinations=12)
-    result["x87-stack.json"] = dict(common, samples_per_encoding=1000000, encodings=9)
+    result["x87-stack.json"] = dict(common, samples_per_encoding=1000000, encodings=25)
     return result
 
 
@@ -45,6 +45,7 @@ def main() -> None:
             ("sse2.json", "operations", 25),
             ("sse2.json", "native_x86_oracle", True),
             ("x87-stack.json", "encodings", 0),
+            ("x87-stack.json", "encodings", 24),
             ("x87-add.json", "control_combinations", 1),
             ("remill-arithmetic.json", "digest", "ffffffffffffffff"),
             ("arithmetic.json", "mismatches", False),
