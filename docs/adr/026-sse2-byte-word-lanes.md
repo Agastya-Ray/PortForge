@@ -41,3 +41,10 @@ unsigned minima must be the literal zero. Do not rewrite emitted game C
 or relax compilation checks. A small LLVM-intrinsic regression compiles and
 executes scalar/vector unsigned saturating subtraction at 8/16/32/64 bits,
 including exhaustive byte inputs, before the rebuilt generator is used.
+
+After that repair, linking exposed missing PSUBSB/PSUBSW XMM definitions
+in the pinned Remill revision. Add these reference semantics using widened
+Remill signed operators and explicit lane bounds, with register/memory
+selectors. Keep the shared native oracle and all 26-operation comparison
+checks. An unexpected Remill hypercall aborts with its operation and RIP;
+it never substitutes PFIR or silently accepts an unsupported reference.

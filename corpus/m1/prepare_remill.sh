@@ -23,6 +23,11 @@ checkout() {
 
 checkout "$work/remill" https://github.com/lifting-bits/remill.git \
     0e324aee8c67a63ec759ef379dcfafa0b3cb1448
+patch_file="$(cd "$(dirname "$0")" && pwd)/remill-signed-subtraction.patch"
+if ! git -C "$work/remill" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
+    git -C "$work/remill" apply --check "$patch_file"
+    git -C "$work/remill" apply "$patch_file"
+fi
 if [[ "$mode" == headers ]]; then
     exit 0
 fi
