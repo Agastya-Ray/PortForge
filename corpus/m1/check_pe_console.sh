@@ -93,7 +93,7 @@ PY
     done
 }
 
-for name in text count streams calls input clock system arithmetic; do
+for name in text count streams calls input clock system arithmetic storage; do
     work="$evidence/$name"
     mkdir -p "$work"
     python3 corpus/m1/check_pe_console_output.py "$name" "$work" --prepare-input
