@@ -174,6 +174,7 @@ fn narrow_register(reg: Register) -> NarrowLocation {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Effect {
+    ScalarStorage(crate::scalar_storage::ScalarStorage),
     ExtendNarrow {
         into: Value,
         source: NarrowLocation,
@@ -320,6 +321,14 @@ fn lift_decoded(
     for instruction in instructions {
         let instruction = instruction?;
         let length = instruction.length;
+        if let Some(storage) = crate::scalar_storage::decode(&instruction) {
+            effects.push(Effect::ScalarStorage(
+                storage.map_err(|e| format!("{e} at offset {offset}"))?,
+            ));
+            effects.push(Effect::AdvanceRip(length));
+            offset += usize::from(length);
+            continue;
+        }
         if matches!(
             instruction.mnemonic,
             Mnemonic::MOVZX | Mnemonic::MOVSX | Mnemonic::MOVSXD
@@ -1139,6 +1148,9 @@ fn lift_decoded(
 pub fn emit_c(block: &[Effect], source: &mut String) {
     for effect in block {
         match *effect {
+            Effect::ScalarStorage(ref instruction) => {
+                crate::scalar_storage::emit(instruction, source)
+            }
             Effect::ExtendNarrow {
                 into: Value(id),
                 source: ref location,
@@ -1470,7 +1482,13 @@ mod tests {
             &[0x65, 0x48, 0x0f, 0xaf, 0x02], // IMUL RAX, GS:[RDX]
             &[0x65, 0x48, 0x6b, 0x02, 0xff], // IMUL RAX, GS:[RDX], -1
         ] {
-            assert!(lift(bytes).is_err(), "unexpected lift for {bytes:02x?}");
+            let instruction = Decoder::new(Mode::X64).decode(bytes).unwrap();
+            let storage = matches!(crate::scalar_storage::decode(&instruction), Some(Ok(_)));
+            assert_eq!(
+                lift(bytes).is_ok(),
+                storage,
+                "unexpected lift for {bytes:02x?}"
+            );
         }
     }
 
@@ -1579,7 +1597,7 @@ mod tests {
 
     #[test]
     fn rejects_truncated_and_unsupported_encodings() {
-        for bytes in [&[0x48][..], &[0x01], &[0x01, 0x08], &[0xf0, 0x01, 0xc8]] {
+        for bytes in [&[0x48][..], &[0x01], &[0x66, 0x50], &[0xf0, 0x01, 0xc8]] {
             assert!(lift(bytes).is_err(), "{bytes:02x?}");
         }
     }
@@ -1587,7 +1605,7 @@ mod tests {
     fn distinguishes_decode_failure_from_missing_semantics() {
         assert!(lift(&[0x48, 0x01]).unwrap_err().contains("truncated"));
         assert!(lift(&[0xd9, 0xfa]).unwrap_err().contains("decoded fsqrt"));
-        assert!(lift(&[0x01, 0x08])
+        assert!(lift(&[0x66, 0x50])
             .unwrap_err()
             .contains("unsupported operands"));
     }

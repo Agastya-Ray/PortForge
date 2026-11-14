@@ -1,6 +1,7 @@
 mod address;
 mod pfir;
 mod program;
+mod scalar_storage;
 
 use std::fmt::Write;
 use std::io::{self, Write as _};
