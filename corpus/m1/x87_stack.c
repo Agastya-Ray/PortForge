@@ -13,11 +13,13 @@ static const block_fn blocks[] = {
     pf_block_7, pf_block_8,
     pf_block_11, pf_block_12, pf_block_13, pf_block_14, pf_block_15, pf_block_16,
     pf_block_17, pf_block_18, pf_block_19,
+    pf_block_20, pf_block_21, pf_block_22, pf_block_23, pf_block_24, pf_block_25, pf_block_26,
 };
 static const char *const names[] = {
     "fld1", "fldz", "fchs", "fabs", "fadd-st0", "fadd-st1", "faddp-st1", "fadd-st3", "faddp-st0",
     "fsub-st0", "fsub-st1", "fsubp-st1", "fsubr-st0", "fsubr-st1", "fsubrp-st1",
     "fmul-st0", "fmul-st1", "fmulp-st1",
+    "fdiv-st0", "fdiv-st1", "fdivp-st1", "fdivr-st0", "fdivr-st1", "fdivrp-st1", "fdivp-st0-alias",
 };
 
 #if defined(__x86_64__)
@@ -47,6 +49,13 @@ static struct pf_x87_state native_step(unsigned operation, uint16_t control,
     case 15: __asm__ volatile(".byte 0xd8, 0xc9" : : : "st", "st(1)"); break;
     case 16: __asm__ volatile(".byte 0xdc, 0xc9" : : : "st", "st(1)"); break;
     case 17: __asm__ volatile(".byte 0xde, 0xc9" : : : "st", "st(1)"); break;
+    case 18: __asm__ volatile(".byte 0xd8, 0xf1" : : : "st", "st(1)"); break;
+    case 19: __asm__ volatile(".byte 0xdc, 0xf9" : : : "st", "st(1)"); break;
+    case 20: __asm__ volatile(".byte 0xde, 0xf9" : : : "st", "st(1)"); break;
+    case 21: __asm__ volatile(".byte 0xd8, 0xf9" : : : "st", "st(1)"); break;
+    case 22: __asm__ volatile(".byte 0xdc, 0xf1" : : : "st", "st(1)"); break;
+    case 23: __asm__ volatile(".byte 0xde, 0xf1" : : : "st", "st(1)"); break;
+    case 24: __asm__ volatile(".byte 0xde, 0xf8" : : : "st"); break;
     default: abort();
     }
     _Alignas(16) unsigned char snapshot[512];
@@ -165,7 +174,7 @@ static void verify_stop(void) {
     }
 
     const uint16_t controls[] = {0x037f, 0x017f, 0x037f};
-    const block_fn binary[] = {pf_block_4, pf_block_13, pf_block_16, pf_block_19};
+    const block_fn binary[] = {pf_block_4, pf_block_13, pf_block_16, pf_block_19, pf_block_20, pf_block_25};
     for (unsigned op = 0; op < sizeof(binary) / sizeof(binary[0]); ++op) {
         for (unsigned i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i) {
             state = (struct pf_state){.rip = 0x1000, .x87 = {.control = controls[i], .occupied = 3}};

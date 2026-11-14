@@ -36,6 +36,7 @@ bool pf_x87_binary(enum pf_x87_binary_op op, struct pf_ext80 a, struct pf_ext80 
     case PF_X87_ADD: evaluate = extF80M_add; break;
     case PF_X87_SUBTRACT: evaluate = extF80M_sub; break;
     case PF_X87_MULTIPLY: evaluate = extF80M_mul; break;
+    case PF_X87_DIVIDE: evaluate = extF80M_div; break;
     default: return false;
     }
 
@@ -58,6 +59,10 @@ bool pf_x87_binary(enum pf_x87_binary_op op, struct pf_ext80 a, struct pf_ext80 
     if (flags & softfloat_flag_infinite) status |= PF_X87_DIVZERO;
     if (flags & softfloat_flag_overflow) status |= PF_X87_OVERFLOW;
     if (flags & softfloat_flag_underflow) status |= PF_X87_UNDERFLOW;
+    /* x87 invalid/divide-zero takes priority over a denormal operand. */
+    if (op == PF_X87_DIVIDE && (flags & (softfloat_flag_invalid | softfloat_flag_infinite))) {
+        status &= ~PF_X87_DENORMAL;
+    }
     if (flags & softfloat_flag_inexact) {
         status |= PF_X87_INEXACT;
         if (softfloat_roundingMode != softfloat_round_minMag) {

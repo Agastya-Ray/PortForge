@@ -1,0 +1,12 @@
+diff --git a/lib/Target/CBackend/CBackend.cpp b/lib/Target/CBackend/CBackend.cpp
+index a23ffa8..74156f5 100644
+--- a/lib/Target/CBackend/CBackend.cpp
++++ b/lib/Target/CBackend/CBackend.cpp
+@@ -4497,4 +4497,6 @@ static void printLimitValue(IntegerType &Ty, bool isSigned, bool isMax,
+     Out << sprefix << type << (isMax ? "_MAX" : "_MIN");
++  else if (isMax)
++    Out << "U" << type << "_MAX";
+   else
+-    Out << "U" << type << (isMax ? "_MAX" : "0");
++    Out << "0";
+ }

@@ -14,16 +14,21 @@ if not exist "%EVIDENCE%" mkdir "%EVIDENCE%" || exit /b 1
     where cl.exe
     where link.exe
 ) > "%EVIDENCE%\toolchain.txt"
-for %%f in (text count streams calls input clock system arithmetic storage) do call :fixture %%f || exit /b 1
+for %%f in (text count streams calls input clock system arithmetic storage division vectors x87) do call :fixture %%f || exit /b 1
 exit /b 0
 
 :fixture
 set "NAME=%~1"
 set "WORK=%EVIDENCE%\%NAME%"
 if not exist "%WORK%" mkdir "%WORK%" || exit /b 1
+set "EXTRA="
+if "%NAME%"=="x87" (
+    set EXTRA="%WORK%\x87.obj"
+)
 for %%b in (guest repeated) do (
+    if "%NAME%"=="x87" ml64.exe /nologo /c /Fo"%WORK%\x87.obj" corpus\m1\pe-console-x87.asm || exit /b 1
     cl.exe /nologo /TC /c /O2 /GS- /Zl /W4 /WX /Fo"%WORK%\guest.obj" "corpus\m1\pe-console-%NAME%.c" || exit /b 1
-    link.exe /nologo /WX /Brepro /incremental:no /nodefaultlib /entry:pf_entry /subsystem:console /out:"%WORK%\%%b.exe" "%WORK%\guest.obj" kernel32.lib || exit /b 1
+    link.exe /nologo /WX /Brepro /incremental:no /nodefaultlib /entry:pf_entry /subsystem:console /out:"%WORK%\%%b.exe" "%WORK%\guest.obj" %EXTRA% kernel32.lib || exit /b 1
 )
 fc.exe /b "%WORK%\guest.exe" "%WORK%\repeated.exe" || exit /b 1
 del "%WORK%\repeated.exe" "%WORK%\guest.obj" || exit /b 1

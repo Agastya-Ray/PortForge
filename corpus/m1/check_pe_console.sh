@@ -65,14 +65,21 @@ build_guest() {
             "${WINDOWS_CC:-clang}" --target=x86_64-w64-windows-gnu -ffreestanding -O1 \
                 -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -Wall -Wextra -Werror \
                 -c "$source" -o "$tmp/guest.obj"
+            extra=()
+            if [[ $source == *pe-console-x87.c ]]; then
+                "${WINDOWS_CC:-clang}" --target=x86_64-w64-windows-gnu -c corpus/m1/pe-console-x87.s -o "$tmp/x87.obj"
+                extra=("$tmp/x87.obj")
+            fi
             "${LLD_LINK:-lld-link}" /entry:pf_entry /subsystem:console /nodefaultlib /timestamp:0 \
-                /out:"$output" "$tmp/guest.obj" "$tmp/kernel32.lib"
+                /out:"$output" "$tmp/guest.obj" "${extra[@]}" "$tmp/kernel32.lib"
             ;;
         mingw)
+            extra=()
+            if [[ $source == *pe-console-x87.c ]]; then extra=(corpus/m1/pe-console-x87.s); fi
             "${MINGW_CC:-x86_64-w64-mingw32-gcc}" -ffreestanding -O1 -fno-unroll-loops \
                 -fno-tree-vectorize -fno-stack-protector -Wall -Wextra -Werror -nostdlib \
                 -Wl,--entry,pf_entry,--subsystem,console,--no-insert-timestamp \
-                "$source" -lkernel32 -o "$output"
+                "$source" "${extra[@]}" -lkernel32 -o "$output"
             ;;
     esac
 }
@@ -93,7 +100,23 @@ PY
     done
 }
 
-for name in text count streams calls input clock system arithmetic storage; do
+softfloat=${PF_SOFTFLOAT_DIRECTORY:-"$tmp/softfloat"}
+if [[ ! -f "$softfloat/build/softfloat.a" ]]; then
+    abi=native
+    if [[ $arch == aarch64 ]]; then abi=windows-arm64; fi
+    bash corpus/m1/prepare_softfloat.sh "$softfloat" "$abi"
+fi
+
+# Exercise loader-created C TLS on real Wine threads before any guest translation.
+if [[ $compiler == clang ]]; then
+    "$winegcc" "${target[@]}" -std=gnu11 -O2 -Wall -Wextra -Werror \
+        -I"$softfloat/source/source/include" corpus/m1/wine_tls.c runtime/host/wine_tls.c \
+        "$softfloat/build/softfloat.a" -o "$tmp/tls.exe"
+    timeout 30 "$loader" "$tmp/tls$suffix" > "$evidence/softfloat-tls.txt"
+    printf 'Wine thread-local SoftFloat state passed\n' | cmp - "$evidence/softfloat-tls.txt"
+fi
+
+for name in text count streams calls input clock system arithmetic storage division vectors x87; do
     work="$evidence/$name"
     mkdir -p "$work"
     python3 corpus/m1/check_pe_console_output.py "$name" "$work" --prepare-input
@@ -133,7 +156,8 @@ for name in text count streams calls input clock system arithmetic storage; do
         cmp "$work/image.bin" "$reference/$name/image.bin"
     fi
     "$winegcc" "${target[@]}" -std=gnu11 -O2 -Wall -Wextra -Werror -I"$work" \
-        runtime/host/wine_console.c -o "$tmp/check.exe"
+        -Iruntime/guest -I"$softfloat/source/source/include" \
+        runtime/host/wine_console.c runtime/host/wine_tls.c runtime/guest/{x87,x87_stack}.c "$softfloat/build/softfloat.a" -o "$tmp/check.exe"
     run "$work/stdin.bin" "$work/translated" "$tmp/check$suffix" "$work/image.bin"
     compare_result "$work/translated" "$oracle"
     python3 corpus/m1/check_pe_console_output.py "$name" "$work/translated"

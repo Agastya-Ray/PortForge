@@ -8,6 +8,9 @@ on:
       - "corpus/m1/check_pe_wine.sh"
       - "corpus/m1/*pe-console*"
       - "corpus/m1/check_pe_console*"
+      - "corpus/m1/prepare_softfloat.sh"
+      - "corpus/m1/x87_program_oracle.py"
+      - "corpus/m1/wine_tls.c"
       - "corpus/m1/build_pe_console_msvc.cmd"
       - "corpus/m1/pe-import.s"
       - "corpus/m1/pe_import_fixture.py"
@@ -54,6 +57,8 @@ jobs:
           rustup override set 1.85.1
           cargo fetch --locked
           bash corpus/m1/check_pe_wine.sh evidence
+          export PF_SOFTFLOAT_DIRECTORY="$RUNNER_TEMP/softfloat"
+          bash corpus/m1/prepare_softfloat.sh "$PF_SOFTFLOAT_DIRECTORY"
           WINDOWS_CC=clang-19 LLD_LINK=lld-link-19 bash corpus/m1/check_pe_console.sh evidence/console/clang
           MINGW_CC=x86_64-w64-mingw32-gcc-posix bash corpus/m1/check_pe_console.sh evidence/console/mingw "" mingw
           bash corpus/m1/check_pe_console.sh evidence/console/msvc msvc-reference msvc
@@ -75,7 +80,7 @@ jobs:
       - run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates git gcc g++ clang lld libc6-dev make cmake cargo rustc python3 wine64 wine64-tools
+            ca-certificates git gcc g++ clang lld libc6-dev make cmake cargo rustc python3 wine64 wine64-tools llvm
           rustc --version | grep '^rustc 1\.85\.1 '
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -86,6 +91,8 @@ jobs:
           cargo fetch --locked
           unset TMPDIR
           bash corpus/m1/check_pe_wine.sh evidence reference
+          export PF_SOFTFLOAT_DIRECTORY="$RUNNER_TEMP/softfloat-windows"
+          bash corpus/m1/prepare_softfloat.sh "$PF_SOFTFLOAT_DIRECTORY" windows-arm64
           for compiler in clang mingw msvc; do
             bash corpus/m1/check_pe_console.sh "evidence/console/$compiler" "reference/console/$compiler" "$compiler"
           done

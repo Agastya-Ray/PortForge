@@ -40,7 +40,7 @@ def verify_pair(reference: Path, arm: Path, filename: str, sample_field: str, mi
 def summarize(reference: Path, arm: Path) -> dict:
     evidence = {}
     for suite, field in (("arithmetic", "samples_per_instruction_width"), ("sse2", "samples_per_operation")):
-        coverage = {"instruction_width_pairs": 6, "encodings_per_pair": 3, "three_instruction_samples": 1000000} if suite == "arithmetic" else {"operations": 5, "encodings_per_operation": 3}
+        coverage = {"instruction_width_pairs": 6, "encodings_per_pair": 3, "three_instruction_samples": 1000000} if suite == "arithmetic" else {"operations": 26, "encodings_per_operation": 3}
         digests = []
         for backend, prefix in (("pfir", ""), ("remill", "remill-")):
             name = f"{prefix}{suite}.json"
@@ -51,7 +51,7 @@ def summarize(reference: Path, arm: Path) -> dict:
             raise ValueError(f"{suite} backend results disagree")
         evidence[suite] = digests[0]
     evidence["x87_add"] = verify_pair(reference, arm, "x87-add.json", "samples_per_control", 100000, {"control_combinations": 12})
-    evidence["x87_stack"] = verify_pair(reference, arm, "x87-stack.json", "samples_per_encoding", 1000000, {"encodings": 9})
+    evidence["x87_stack"] = verify_pair(reference, arm, "x87-stack.json", "samples_per_encoding", 1000000, {"encodings": 25})
 
     timings, benchmark_digests, block_counts = {}, set(), set()
     for backend in ("pfir", "remill"):
