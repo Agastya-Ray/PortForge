@@ -99,6 +99,7 @@ jobs:
           print("sse2_digest=" + pfir_sse["digest"])
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: remill-x86-reference
           path: evidence/
@@ -165,6 +166,7 @@ jobs:
           assert len(benchmark_digests) == 1
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: remill-arm64-comparison
           path: evidence/

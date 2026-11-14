@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <remill/Arch/X86/Runtime/State.h>
 
@@ -20,6 +21,13 @@ extern "C" bool __remill_flag_computation_overflow(bool result, ...) { return re
 extern "C" bool __remill_flag_computation_carry(bool result, ...) { return result; }
 
 extern "C" void *__remill_error(State *, uint64_t, void *) { std::abort(); }
+
+// The comparison must never silently replace missing reference semantics.
+extern "C" void *__remill_sync_hyper_call(State *state, void *, uint32_t operation) {
+    std::fprintf(stderr, "Unsupported Remill reference hypercall %u at 0x%llx\n",
+                 operation, static_cast<unsigned long long>(state->gpr.rip.qword));
+    std::abort();
+}
 
 static thread_local bool reached_boundary;
 extern "C" void *__remill_missing_block(State *state, uint64_t address, void *memory) {

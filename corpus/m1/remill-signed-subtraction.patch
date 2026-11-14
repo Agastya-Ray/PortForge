@@ -1,0 +1,56 @@
+diff --git a/lib/Arch/X86/Semantics/MMX.cpp b/lib/Arch/X86/Semantics/MMX.cpp
+index a1c2d53..0d066eb 100644
+--- a/lib/Arch/X86/Semantics/MMX.cpp
++++ b/lib/Arch/X86/Semantics/MMX.cpp
+@@ -2366,2 +2366,49 @@ DEF_ISEL(FEMMS) = DoEMMS;
+ // 8611:1856 PACKSSWB PACKSSWB_MMXq_MEMq MMX MMX PENTIUMMMX ATTRIBUTES: HALF_WIDE_OUTPUT NOTSX
+-// 8615:1857 PACKSSWB PACKSSWB_MMXq_MMXq MMX MMX PENTIUMMMX ATTRIBUTES: HALF_WIDE_OUTPUT NOTSX
+\ No newline at end of file
++// 8615:1857 PACKSSWB PACKSSWB_MMXq_MMXq MMX MMX PENTIUMMMX ATTRIBUTES: HALF_WIDE_OUTPUT NOTSX
++
++namespace {
++
++template <typename D, typename S1, typename S2>
++DEF_SEM(PSUBSB, D dst, S1 src1, S2 src2) {
++  auto left = SReadV8(src1);
++  auto right = SReadV8(src2);
++  auto result = SClearV8(SReadV8(dst));
++  _Pragma("unroll") for (size_t i = 0; i < NumVectorElems(left); ++i) {
++    auto a = SExtractV8(left, i);
++    auto b = SExtractV8(right, i);
++    auto value = SSub(SExt(a), SExt(b));
++    auto minimum = SExt(Minimize(a));
++    auto maximum = SExt(Maximize(a));
++    value = Select(SCmpLt(value, minimum), minimum, value);
++    value = Select(SCmpGt(value, maximum), maximum, value);
++    result = SInsertV8(result, i, Trunc(value));
++  }
++  SWriteV8(dst, result);
++  return memory;
++}
++
++template <typename D, typename S1, typename S2>
++DEF_SEM(PSUBSW, D dst, S1 src1, S2 src2) {
++  auto left = SReadV16(src1);
++  auto right = SReadV16(src2);
++  auto result = SClearV16(SReadV16(dst));
++  _Pragma("unroll") for (size_t i = 0; i < NumVectorElems(left); ++i) {
++    auto a = SExtractV16(left, i);
++    auto b = SExtractV16(right, i);
++    auto value = SSub(SExt(a), SExt(b));
++    auto minimum = SExt(Minimize(a));
++    auto maximum = SExt(Maximize(a));
++    value = Select(SCmpLt(value, minimum), minimum, value);
++    value = Select(SCmpGt(value, maximum), maximum, value);
++    result = SInsertV16(result, i, Trunc(value));
++  }
++  SWriteV16(dst, result);
++  return memory;
++}
++
++}  // namespace
++
++DEF_ISEL(PSUBSB_XMMdq_XMMdq) = PSUBSB<V128W, V128, V128>;
++DEF_ISEL(PSUBSB_XMMdq_MEMdq) = PSUBSB<V128W, V128, MV128>;
++DEF_ISEL(PSUBSW_XMMdq_XMMdq) = PSUBSW<V128W, V128, V128>;
++DEF_ISEL(PSUBSW_XMMdq_MEMdq) = PSUBSW<V128W, V128, MV128>;
