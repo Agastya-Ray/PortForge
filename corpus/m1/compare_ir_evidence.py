@@ -40,7 +40,7 @@ def verify_pair(reference: Path, arm: Path, filename: str, sample_field: str, mi
 def summarize(reference: Path, arm: Path) -> dict:
     evidence = {}
     for suite, field in (("arithmetic", "samples_per_instruction_width"), ("sse2", "samples_per_operation")):
-        coverage = {"instruction_width_pairs": 6, "encodings_per_pair": 3, "three_instruction_samples": 1000000} if suite == "arithmetic" else {"operations": 5, "encodings_per_operation": 3}
+        coverage = {"instruction_width_pairs": 6, "encodings_per_pair": 3, "three_instruction_samples": 1000000} if suite == "arithmetic" else {"operations": 26, "encodings_per_operation": 3}
         digests = []
         for backend, prefix in (("pfir", ""), ("remill", "remill-")):
             name = f"{prefix}{suite}.json"

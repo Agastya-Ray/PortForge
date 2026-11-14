@@ -29,7 +29,7 @@ bash corpus/m1/check_pe_console.sh ./evidence/mingw "" mingw  # x86-64 Linux wit
 
 The console check builds Windows executables, translates them, and compares
 their raw output and exit status against a native x86-64 run under Wine.
-CI builds the same eight programs with Clang, MinGW GCC, and MSVC. The
+CI builds the same eleven programs with Clang, MinGW GCC, and MSVC. The
 MSVC job also records native Windows results. The ARM64 job translates
 the original executables from each compiler and checks their output and
 exit status. See [console execution](docs/adr/011-console-programs.md) for
@@ -45,3 +45,16 @@ bash corpus/m1/check_memory_ops.sh integer-products
 ```
 
 See [Architecture](docs/ARCHITECTURE.md) for the file interface and milestone status.
+
+Byte/word arithmetic and checked scalar memory writes are described in
+[ADR-024](docs/adr/024-scalar-storage.md). Run their native/ARM64 corpus with
+`bash corpus/m1/check_scalar_storage.sh`.
+
+Full-width integer products, division and guest divide-error reporting are
+described in [ADR-025](docs/adr/025-wide-integers.md). Run their corpus with
+`bash corpus/m1/check_wide_integers.sh`.
+
+SSE2 byte/word arithmetic, saturation, packed products and compiler XMM moves
+are covered by [ADR-026](docs/adr/026-sse2-byte-word-lanes.md). The shared
+PFIR/Remill corpus now checks 26 packed operations; memory and move corpora
+check their buffer and alignment behavior.

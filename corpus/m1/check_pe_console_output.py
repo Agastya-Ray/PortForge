@@ -32,6 +32,49 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         b = ((~b) + (low < product)) & mask
         a = (-low) & mask
         arithmetic.extend((a, b))
+    storage_bytes = bytes((((v + i + 3) & 0xff) ^ 0xa5) for i, v in enumerate((0, 1, 0x7f, 0x80, 0xfe, 0xff, 0x0a, 0x0d)))
+    storage_words = [~(v - 0x1234 - i) & 0xffff for i, v in enumerate((0, 1, 0x7fff, 0x8000, 0xfffe, 0xffff, 0x0a0d, 0x1234))]
+    division = []
+    a, b, value, divisor = 0xfedcba9876543211, 0x800000000000007f, -0x123456789abcdef, -7919
+    for _ in range(6):
+        quotient = abs(value) // abs(divisor)
+        if (value < 0) != (divisor < 0):
+            quotient = -quotient
+        remainder = value - quotient * divisor
+        division.extend((a // b, a % b, quotient & mask, remainder & mask))
+        a = (a * 0x4f1bbcdc + 0x91273) & mask
+        b = ((b - 0x1234) & mask) | 1
+        value = -(abs(value) // 3) if value < 0 else value // 3
+    vector_a = struct.pack("<2Q", 0x7fff8000ff007f80, 0xffff00017ffe8001)
+    vector_b = struct.pack("<2Q", 0x0001ffff0101807f, 0x80007fff0001ffff)
+
+    def lanes(width, signed, operation, saturated=False):
+        output = bytearray()
+        count = width // 8
+        lower = -(1 << (width - 1)) if signed else 0
+        upper = (1 << (width - int(signed))) - 1
+        for offset in range(0, 16, count):
+            left = int.from_bytes(vector_a[offset:offset+count], "little", signed=signed)
+            right = int.from_bytes(vector_b[offset:offset+count], "little", signed=signed)
+            result = operation(left, right)
+            if saturated:
+                result = max(lower, min(upper, result))
+            output += (result & ((1 << width) - 1)).to_bytes(count, "little")
+        return bytes(output)
+
+    vectors = b""
+    for operation in (lambda a, b: a + b, lambda a, b: a - b):
+        for width in (8, 16):
+            vectors += lanes(width, False, operation)
+    for operation in (lambda a, b: a + b, lambda a, b: a - b):
+        for signed in (True, False):
+            for width in (8, 16):
+                vectors += lanes(width, signed, operation, saturated=True)
+    vectors += lanes(16, False, lambda a, b: a * b)
+    vectors += lanes(16, True, lambda a, b: (a * b) >> 16)
+    vectors += lanes(16, False, lambda a, b: (a * b) >> 16)
+    left, right = struct.unpack("<4I", vector_a), struct.unpack("<4I", vector_b)
+    vectors += struct.pack("<2Q", *(left[i] * right[i] for i in (0, 2)))
     return {
         "text": (b"PortForge console\r\nsecond line\n", b"", 0),
         "count": (struct.pack("<8I", *words), b"", 0),
@@ -41,6 +84,9 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         "clock": (b"performance counter ok\n", b"", 0),
         "system": (b"system calls ok\n", b"", 0),
         "arithmetic": (struct.pack("<16Q", *arithmetic), b"", 0),
+        "storage": (storage_bytes + struct.pack("<8H", *storage_words), b"", 0),
+        "division": (struct.pack("<24Q", *division), b"", 0),
+        "vectors": (vectors, b"", 0),
     }
 
 

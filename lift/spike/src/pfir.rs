@@ -87,6 +87,22 @@ pub enum Packed {
     Or,
     EqualDwords,
     GreaterSignedDwords,
+    AddBytes,
+    AddWords,
+    SubBytes,
+    SubWords,
+    AddSignedBytesSaturated,
+    AddSignedWordsSaturated,
+    AddUnsignedBytesSaturated,
+    AddUnsignedWordsSaturated,
+    SubSignedBytesSaturated,
+    SubSignedWordsSaturated,
+    SubUnsignedBytesSaturated,
+    SubUnsignedWordsSaturated,
+    MultiplyLowWords,
+    MultiplyHighSignedWords,
+    MultiplyHighUnsignedWords,
+    MultiplyUnsignedDwords,
 }
 
 impl Packed {
@@ -102,6 +118,22 @@ impl Packed {
             Self::Or => "PF_POR",
             Self::EqualDwords => "PF_PCMPEQD",
             Self::GreaterSignedDwords => "PF_PCMPGTD",
+            Self::AddBytes => "PF_PADDB",
+            Self::AddWords => "PF_PADDW",
+            Self::SubBytes => "PF_PSUBB",
+            Self::SubWords => "PF_PSUBW",
+            Self::AddSignedBytesSaturated => "PF_PADDSB",
+            Self::AddSignedWordsSaturated => "PF_PADDSW",
+            Self::AddUnsignedBytesSaturated => "PF_PADDUSB",
+            Self::AddUnsignedWordsSaturated => "PF_PADDUSW",
+            Self::SubSignedBytesSaturated => "PF_PSUBSB",
+            Self::SubSignedWordsSaturated => "PF_PSUBSW",
+            Self::SubUnsignedBytesSaturated => "PF_PSUBUSB",
+            Self::SubUnsignedWordsSaturated => "PF_PSUBUSW",
+            Self::MultiplyLowWords => "PF_PMULLW",
+            Self::MultiplyHighSignedWords => "PF_PMULHW",
+            Self::MultiplyHighUnsignedWords => "PF_PMULHUW",
+            Self::MultiplyUnsignedDwords => "PF_PMULUDQ",
         }
     }
 }
@@ -174,6 +206,7 @@ fn narrow_register(reg: Register) -> NarrowLocation {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Effect {
+    ScalarStorage(crate::scalar_storage::ScalarStorage),
     ExtendNarrow {
         into: Value,
         source: NarrowLocation,
@@ -289,6 +322,7 @@ pub enum Effect {
         address: Address,
         width: Width,
     },
+    WideInteger(crate::integer_wide::WideInteger),
     AdvanceRip(u8),
 }
 
@@ -320,6 +354,14 @@ fn lift_decoded(
     for instruction in instructions {
         let instruction = instruction?;
         let length = instruction.length;
+        if let Some(storage) = crate::scalar_storage::decode(&instruction) {
+            effects.push(Effect::ScalarStorage(
+                storage.map_err(|e| format!("{e} at offset {offset}"))?,
+            ));
+            effects.push(Effect::AdvanceRip(length));
+            offset += usize::from(length);
+            continue;
+        }
         if matches!(
             instruction.mnemonic,
             Mnemonic::MOVZX | Mnemonic::MOVSX | Mnemonic::MOVSXD
@@ -405,6 +447,14 @@ fn lift_decoded(
                 },
                 Effect::AdvanceRip(length),
             ]);
+            offset += usize::from(length);
+            continue;
+        }
+        if let Some(wide) = crate::integer_wide::decode(&instruction) {
+            effects.push(Effect::WideInteger(
+                wide.map_err(|e| format!("{e} at offset {offset}"))?,
+            ));
+            effects.push(Effect::AdvanceRip(length));
             offset += usize::from(length);
             continue;
         }
@@ -607,8 +657,19 @@ fn lift_decoded(
             offset += usize::from(length);
             continue;
         }
-        if matches!(instruction.mnemonic, Mnemonic::MOVDQA | Mnemonic::MOVDQU) {
-            let alignment = if instruction.mnemonic == Mnemonic::MOVDQA {
+        if matches!(
+            instruction.mnemonic,
+            Mnemonic::MOVDQA
+                | Mnemonic::MOVDQU
+                | Mnemonic::MOVAPS
+                | Mnemonic::MOVUPS
+                | Mnemonic::MOVAPD
+                | Mnemonic::MOVUPD
+        ) {
+            let alignment = if matches!(
+                instruction.mnemonic,
+                Mnemonic::MOVDQA | Mnemonic::MOVAPS | Mnemonic::MOVAPD
+            ) {
                 16
             } else {
                 1
@@ -831,6 +892,22 @@ fn lift_decoded(
             Mnemonic::POR => Operation::Packed(Packed::Or),
             Mnemonic::PCMPEQD => Operation::Packed(Packed::EqualDwords),
             Mnemonic::PCMPGTD => Operation::Packed(Packed::GreaterSignedDwords),
+            Mnemonic::PADDB => Operation::Packed(Packed::AddBytes),
+            Mnemonic::PADDW => Operation::Packed(Packed::AddWords),
+            Mnemonic::PSUBB => Operation::Packed(Packed::SubBytes),
+            Mnemonic::PSUBW => Operation::Packed(Packed::SubWords),
+            Mnemonic::PADDSB => Operation::Packed(Packed::AddSignedBytesSaturated),
+            Mnemonic::PADDSW => Operation::Packed(Packed::AddSignedWordsSaturated),
+            Mnemonic::PADDUSB => Operation::Packed(Packed::AddUnsignedBytesSaturated),
+            Mnemonic::PADDUSW => Operation::Packed(Packed::AddUnsignedWordsSaturated),
+            Mnemonic::PSUBSB => Operation::Packed(Packed::SubSignedBytesSaturated),
+            Mnemonic::PSUBSW => Operation::Packed(Packed::SubSignedWordsSaturated),
+            Mnemonic::PSUBUSB => Operation::Packed(Packed::SubUnsignedBytesSaturated),
+            Mnemonic::PSUBUSW => Operation::Packed(Packed::SubUnsignedWordsSaturated),
+            Mnemonic::PMULLW => Operation::Packed(Packed::MultiplyLowWords),
+            Mnemonic::PMULHW => Operation::Packed(Packed::MultiplyHighSignedWords),
+            Mnemonic::PMULHUW => Operation::Packed(Packed::MultiplyHighUnsignedWords),
+            Mnemonic::PMULUDQ => Operation::Packed(Packed::MultiplyUnsignedDwords),
             Mnemonic::FLD1 => Operation::X87(X87::LoadOne),
             Mnemonic::FLDZ => Operation::X87(X87::LoadZero),
             Mnemonic::FCHS => Operation::X87(X87::ChangeSign),
@@ -1139,6 +1216,10 @@ fn lift_decoded(
 pub fn emit_c(block: &[Effect], source: &mut String) {
     for effect in block {
         match *effect {
+            Effect::WideInteger(ref instruction) => crate::integer_wide::emit(instruction, source),
+            Effect::ScalarStorage(ref instruction) => {
+                crate::scalar_storage::emit(instruction, source)
+            }
             Effect::ExtendNarrow {
                 into: Value(id),
                 source: ref location,
@@ -1451,8 +1532,7 @@ mod tests {
     #[test]
     fn integer_expansion_rejects_implicit_products_and_unsupported_storage() {
         for bytes in [
-            &[0xf7, 0xe9][..],               // IMUL ECX, implicit EDX:EAX
-            &[0x48, 0xf7, 0xe9],             // IMUL RCX, implicit RDX:RAX
+            &[0x66, 0x0f, 0xaf, 0xc1][..],   // IMUL ECX, implicit EDX:EAX
             &[0x66, 0x0f, 0xaf, 0xc1],       // IMUL AX, CX
             &[0x66, 0x6b, 0xc1, 0xff],       // IMUL AX, CX, -1
             &[0x10, 0xc8],                   // ADC AL, CL
@@ -1470,7 +1550,13 @@ mod tests {
             &[0x65, 0x48, 0x0f, 0xaf, 0x02], // IMUL RAX, GS:[RDX]
             &[0x65, 0x48, 0x6b, 0x02, 0xff], // IMUL RAX, GS:[RDX], -1
         ] {
-            assert!(lift(bytes).is_err(), "unexpected lift for {bytes:02x?}");
+            let instruction = Decoder::new(Mode::X64).decode(bytes).unwrap();
+            let storage = matches!(crate::scalar_storage::decode(&instruction), Some(Ok(_)));
+            assert_eq!(
+                lift(bytes).is_ok(),
+                storage,
+                "unexpected lift for {bytes:02x?}"
+            );
         }
     }
 
@@ -1579,7 +1665,7 @@ mod tests {
 
     #[test]
     fn rejects_truncated_and_unsupported_encodings() {
-        for bytes in [&[0x48][..], &[0x01], &[0x01, 0x08], &[0xf0, 0x01, 0xc8]] {
+        for bytes in [&[0x48][..], &[0x01], &[0x66, 0x50], &[0xf0, 0x01, 0xc8]] {
             assert!(lift(bytes).is_err(), "{bytes:02x?}");
         }
     }
@@ -1587,7 +1673,7 @@ mod tests {
     fn distinguishes_decode_failure_from_missing_semantics() {
         assert!(lift(&[0x48, 0x01]).unwrap_err().contains("truncated"));
         assert!(lift(&[0xd9, 0xfa]).unwrap_err().contains("decoded fsqrt"));
-        assert!(lift(&[0x01, 0x08])
+        assert!(lift(&[0x66, 0x50])
             .unwrap_err()
             .contains("unsupported operands"));
     }
