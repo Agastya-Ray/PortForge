@@ -60,22 +60,23 @@ fi
 
 build_guest() {
     local source=$1 output=$2
+    local fixture=${source##*/pe-console-}
+    fixture=${fixture%.c}
+    local extra=()
     case "$compiler" in
         clang)
             "${WINDOWS_CC:-clang}" --target=x86_64-w64-windows-gnu -ffreestanding -O1 \
                 -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -Wall -Wextra -Werror \
                 -c "$source" -o "$tmp/guest.obj"
-            extra=()
-            if [[ $source == *pe-console-x87.c ]]; then
-                "${WINDOWS_CC:-clang}" --target=x86_64-w64-windows-gnu -c corpus/m1/pe-console-x87.s -o "$tmp/x87.obj"
-                extra=("$tmp/x87.obj")
+            if [[ $fixture == x87 || $fixture == sse ]]; then
+                "${WINDOWS_CC:-clang}" --target=x86_64-w64-windows-gnu -c "corpus/m1/pe-console-$fixture.s" -o "$tmp/guest-asm.obj"
+                extra=("$tmp/guest-asm.obj")
             fi
             "${LLD_LINK:-lld-link}" /entry:pf_entry /subsystem:console /nodefaultlib /timestamp:0 \
                 /out:"$output" "$tmp/guest.obj" "${extra[@]}" "$tmp/kernel32.lib"
             ;;
         mingw)
-            extra=()
-            if [[ $source == *pe-console-x87.c ]]; then extra=(corpus/m1/pe-console-x87.s); fi
+            if [[ $fixture == x87 || $fixture == sse ]]; then extra=("corpus/m1/pe-console-$fixture.s"); fi
             "${MINGW_CC:-x86_64-w64-mingw32-gcc}" -ffreestanding -O1 -fno-unroll-loops \
                 -fno-tree-vectorize -fno-stack-protector -Wall -Wextra -Werror -nostdlib \
                 -Wl,--entry,pf_entry,--subsystem,console,--no-insert-timestamp \
@@ -116,7 +117,7 @@ if [[ $compiler == clang ]]; then
     printf 'Wine thread-local SoftFloat state passed\n' | cmp - "$evidence/softfloat-tls.txt"
 fi
 
-for name in text count streams calls input clock system arithmetic storage division vectors x87; do
+for name in text count streams calls input clock system arithmetic storage division vectors x87 sse; do
     work="$evidence/$name"
     mkdir -p "$work"
     python3 corpus/m1/check_pe_console_output.py "$name" "$work" --prepare-input

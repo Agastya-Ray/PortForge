@@ -3,7 +3,19 @@ use pf_decode::{DecodedOperandKind, Instruction, InstructionAttributes, Mnemonic
 use std::fmt::Write;
 
 #[derive(Debug, PartialEq, Eq)]
+pub enum ScalarSource {
+    Register(u8),
+    Memory(Address),
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum ScalarSse {
+    Compare {
+        lhs: u8,
+        rhs: ScalarSource,
+        width: u16,
+        ordered: bool,
+    },
     Mxcsr {
         address: Address,
         store: bool,
@@ -28,8 +40,12 @@ pub enum ScalarSse {
 pub fn lift(instruction: &Instruction) -> Option<Result<ScalarSse, String>> {
     let mnemonic = instruction.mnemonic;
     let width = match mnemonic {
-        Mnemonic::LDMXCSR | Mnemonic::STMXCSR | Mnemonic::MOVSS => 32,
-        Mnemonic::MOVSD => 64,
+        Mnemonic::LDMXCSR
+        | Mnemonic::STMXCSR
+        | Mnemonic::MOVSS
+        | Mnemonic::COMISS
+        | Mnemonic::UCOMISS => 32,
+        Mnemonic::MOVSD | Mnemonic::COMISD | Mnemonic::UCOMISD => 64,
         _ => return None,
     };
     let operands = instruction.visible_operands();
@@ -49,6 +65,7 @@ pub fn lift(instruction: &Instruction) -> Option<Result<ScalarSse, String>> {
             Address::for_access(memory, instruction.address_width, instruction.length)
                 .ok_or_else(unsupported)
         };
+        let xmm = |reg: pf_decode::Register| reg.class() == RegisterClass::XMM;
         match operands {
             [operand] if matches!(mnemonic, Mnemonic::LDMXCSR | Mnemonic::STMXCSR) => {
                 if let DecodedOperandKind::Mem(memory) = &operand.kind {
@@ -61,8 +78,33 @@ pub fn lift(instruction: &Instruction) -> Option<Result<ScalarSse, String>> {
                 }
                 Err(unsupported())
             }
+            [left, right]
+                if matches!(
+                    mnemonic,
+                    Mnemonic::COMISS | Mnemonic::COMISD | Mnemonic::UCOMISS | Mnemonic::UCOMISD
+                ) =>
+            {
+                let DecodedOperandKind::Reg(lhs) = left.kind else {
+                    return Err(unsupported());
+                };
+                if !xmm(lhs) {
+                    return Err(unsupported());
+                }
+                let rhs = match &right.kind {
+                    DecodedOperandKind::Reg(reg) if xmm(*reg) => ScalarSource::Register(reg.id()),
+                    DecodedOperandKind::Mem(mem) if right.size == width => {
+                        ScalarSource::Memory(address(mem)?)
+                    }
+                    _ => return Err(unsupported()),
+                };
+                Ok(ScalarSse::Compare {
+                    lhs: lhs.id(),
+                    rhs,
+                    width,
+                    ordered: matches!(mnemonic, Mnemonic::COMISS | Mnemonic::COMISD),
+                })
+            }
             [destination, source] if matches!(mnemonic, Mnemonic::MOVSS | Mnemonic::MOVSD) => {
-                let xmm = |reg: pf_decode::Register| reg.class() == RegisterClass::XMM;
                 match (&destination.kind, &source.kind) {
                     (DecodedOperandKind::Reg(dst), DecodedOperandKind::Reg(src))
                         if xmm(*dst) && xmm(*src) =>
@@ -102,6 +144,20 @@ pub fn lift(instruction: &Instruction) -> Option<Result<ScalarSse, String>> {
 
 pub fn emit(operation: &ScalarSse, output: &mut String) {
     match operation {
+        ScalarSse::Compare {
+            lhs,
+            rhs,
+            width,
+            ordered,
+        } => match rhs {
+            ScalarSource::Register(reg) => {
+                writeln!(output, "    if (!pf_sse_compare(state, state->xmm[{lhs}].qword[0], state->xmm[{reg}].qword[0], {width}, {ordered})) return;").unwrap();
+            }
+            ScalarSource::Memory(address) => {
+                let address = address.c_expression();
+                writeln!(output, "    if (!pf_sse_compare_memory(state, {lhs}, {address}, {width}, {ordered})) return;").unwrap();
+            }
+        },
         ScalarSse::Mxcsr { address, store } => {
             let address = address.c_expression();
             writeln!(
@@ -147,6 +203,28 @@ pub fn emit(operation: &ScalarSse, output: &mut String) {
 #[cfg(test)]
 mod tests {
     use crate::pfir::{lift, Effect};
+
+    #[test]
+    fn scalar_compares_require_legacy_xmm_and_flat_memory() {
+        for bytes in [
+            &[0x45, 0x0f, 0x2f, 0xf7][..],         // COMISS XMM14, XMM15
+            &[0x66, 0x0f, 0x2e, 0x05, 0, 0, 0, 0], // UCOMISD XMM0, [RIP]
+        ] {
+            assert!(matches!(
+                lift(bytes).unwrap().as_slice(),
+                [
+                    Effect::ScalarSse(super::ScalarSse::Compare { .. }),
+                    Effect::AdvanceRip(_)
+                ]
+            ));
+        }
+        for bytes in [
+            &[0x64, 0x0f, 0x2e, 0x00][..], // UCOMISS FS:[RAX]
+            &[0xc5, 0xf9, 0x2f, 0xc1],     // VCOMISD
+        ] {
+            assert!(lift(bytes).is_err());
+        }
+    }
 
     #[test]
     fn accepts_scalar_sse_and_rejects_vex_segmented_and_string_forms() {

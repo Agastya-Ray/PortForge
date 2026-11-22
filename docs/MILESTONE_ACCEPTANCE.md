@@ -9,18 +9,18 @@ evidence. Work proceeds M1, then M2, then M3. Each gate requires reproducible ar
 | Required result | Verified evidence or remaining work |
 | --- | --- |
 | Integer, x87 and SSE2 instruction classes have at least one million native-reference cases and zero mismatches | Existing native x86 and ARM64 workflow artifacts cover the implemented forms. Full coverage of the selected program corpus is still required; the project does not claim every x86 instruction is implemented. |
-| Tier-2 compiler-built programs produce identical output on ARM64 Linux | Eleven programs built with Clang, MinGW and MSVC pass on PR39 commit `9000ddc129e8e6f0072a57997904a13af279eb09`. This unit adds actual x87 numerical program integration; its hosted evidence is pending. |
+| Tier-2 compiler-built programs produce identical output on ARM64 Linux | Twelve programs built with Clang, MinGW and MSVC passed [Windows and translated ARM64 Wine](https://github.com/Agastya-Ray/PortForge/actions/runs/43651480272) at PR40 commit `9e08dee8eb9c9cc31eba12ee1fc0dff5201a2f38`. The thirteenth fixture exercises scalar SSE and requires its own hosted evidence. |
 | Threads and callbacks execute correctly | Still open: real Wine thread entry callbacks, separate CPU/stack/error state, synchronization and memory ordering evidence. |
 | Guest exceptions and SEH work in the program corpus | Still open: guest exception records, unwinding and handler callbacks. Returning an arithmetic-fault status does not meet this requirement. SEH means Windows structured exception handling. |
-| Floating-point compiler programs execute correctly | This unit adds finite x87 division and control/status transfer. SSE2 floating-point state and operations needed by the corpus remain open. |
+| Floating-point compiler programs execute correctly | Finite x87 division and control/status transfer passed the hosted program corpus. The next slice implements MXCSR, scalar moves and scalar comparisons. Scalar SSE arithmetic and conversions needed by the corpus remain open. |
 | The IR decision is recorded and merged | ADR001 selects PFIR. PR30 merged the correctness/size/timing decision evidence. Remill remains a comparison backend. |
 
 The [PR39 native/ARM64 reference comparison](https://github.com/Agastya-Ray/PortForge/actions/runs/43618761015)
 and [compiler-program Windows/Wine/ARM64 results](https://github.com/Agastya-Ray/PortForge/actions/runs/43618761026)
 are immutable examples of the existing evidence at that source revision.
 
-The next substantial implementation units are x87 program integration,
-callback-capable imports and real threads, guest exception handling, and the
+The next substantial implementation units are callback-capable imports and
+real threads, guest exception handling, and the
 remaining numerical operations used by the tier-2 corpus. Each unit needs
 independent review plus native and ARM64 evidence before it is ready to merge.
 
