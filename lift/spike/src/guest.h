@@ -30,9 +30,13 @@ struct pf_pending {
 
 enum pf_integer_fault { PF_INT_OK, PF_INT_DIVIDE_ZERO, PF_INT_DIVIDE_OVERFLOW };
 
+enum pf_simd_fault { PF_SIMD_OK, PF_SIMD_BAD_MXCSR };
+
 struct pf_state {
     uint64_t gpr[16];
     struct pf_xmm xmm[16];
+    uint32_t mxcsr;
+    enum pf_simd_fault simd_fault;
     struct pf_x87_state x87;
     bool x87_unsupported;
     struct pf_memory memory;

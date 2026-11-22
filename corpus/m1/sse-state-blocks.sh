@@ -1,0 +1,7 @@
+blocks=(
+    0fae10 0fae18
+    f30f1000 f30f1100 f30f10c1 f30f11c8
+    f20f1000 f20f1100 f20f10c1 f20f11c8
+    f3450f10f7 f2450f11ff
+    0fae104883c101
+)

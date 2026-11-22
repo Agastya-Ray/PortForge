@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
     pf_write_le64(memory + (rsp - base), stop);
     struct pf_state state = {
         .gpr = {[4] = rsp}, .rip = PF_PE_ENTRY, .rflags = 2,
-        .x87 = {.control = 0x027f},
+        .x87 = {.control = 0x027f}, .mxcsr = PF_MXCSR_RESET,
         .memory = {memory, base, size, true},
     };
     struct pf_pe_bind_result bind = pf_pe_bind_imports(&state, api.exports, PF_WINE_EXPORT_COUNT,
@@ -55,8 +55,9 @@ int main(int argc, char **argv) {
     enum pf_pe_status status = pf_pe_run_bound(&state, stop, PF_INSTRUCTION_BUDGET, bindings, pf_pe_import_count);
     if (status == PF_PE_EXITED) result = (int)state.pe_exit_code;
     else if (status == PF_PE_RETURNED) result = (int)(uint32_t)state.gpr[0];
-    else fprintf(stderr, "PortForge guest stopped at 0x%llx (status %d, memory fault %d at 0x%llx, integer fault %d)\n",
-        (unsigned long long)state.rip, status, state.memory_fault, (unsigned long long)state.fault_address, state.integer_fault);
+    else fprintf(stderr, "PortForge guest stopped at 0x%llx (status %d, memory fault %d at 0x%llx, integer fault %d, SIMD fault %d)\n",
+        (unsigned long long)state.rip, status, state.memory_fault, (unsigned long long)state.fault_address,
+        state.integer_fault, state.simd_fault);
 done:
     pf_wine_close(&api);
     free(bindings);

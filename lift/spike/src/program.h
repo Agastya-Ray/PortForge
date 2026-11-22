@@ -13,6 +13,7 @@ enum pf_pe_status {
     PF_PE_EXITED,
     PF_PE_CONTINUE,
     PF_PE_INTEGER_FAULT,
+    PF_PE_SIMD_FAULT,
 };
 
 struct pf_pe_import {
