@@ -3,6 +3,7 @@ mod integer_wide;
 mod pfir;
 mod program;
 mod scalar_storage;
+mod sse_scalar;
 mod x87_control;
 
 use std::fmt::Write;
@@ -16,6 +17,7 @@ fn compile(mut arguments: impl Iterator<Item = String>) -> Result<String, String
     source.push('\n');
     source.push_str(include_str!("guest.h"));
     source.push_str(include_str!("../../../runtime/guest/integer.h"));
+    source.push_str(include_str!("../../../runtime/guest/sse.h"));
     let Some(first) = arguments.next() else {
         return Err(
             "usage: pf-ir-spike <hex-block>... | --pe <file> [--image-base <0xVA>] [--seed-rva <0xRVA>]... | --pe-image <file> [--image-base <0xVA>]"

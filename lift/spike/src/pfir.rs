@@ -216,6 +216,7 @@ fn narrow_register(reg: Register) -> NarrowLocation {
 pub enum Effect {
     ScalarStorage(crate::scalar_storage::ScalarStorage),
     X87Control(crate::x87_control::Control),
+    ScalarSse(crate::sse_scalar::ScalarSse),
     ExtendNarrow {
         into: Value,
         source: NarrowLocation,
@@ -556,6 +557,14 @@ fn lift_decoded(
                 }
                 _ => return Err(unsupported()),
             }
+            effects.push(Effect::AdvanceRip(length));
+            offset += usize::from(length);
+            continue;
+        }
+        if let Some(operation) = crate::sse_scalar::lift(&instruction) {
+            effects.push(Effect::ScalarSse(
+                operation.map_err(|error| format!("{error} at offset {offset}"))?,
+            ));
             effects.push(Effect::AdvanceRip(length));
             offset += usize::from(length);
             continue;
@@ -1467,6 +1476,7 @@ pub fn emit_c(block: &[Effect], source: &mut String) {
                 writeln!(source, "    state->xmm[{register}] = v{id};").unwrap();
             }
             Effect::X87Control(ref control) => crate::x87_control::emit(control, source),
+            Effect::ScalarSse(ref operation) => crate::sse_scalar::emit(operation, source),
             Effect::X87 {
                 operation,
                 destination,
