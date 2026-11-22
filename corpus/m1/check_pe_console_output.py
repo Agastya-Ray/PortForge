@@ -89,6 +89,11 @@ def expected() -> dict[str, tuple[bytes, bytes, int]]:
         "division": (struct.pack("<24Q", *division), b"", 0),
         "vectors": (vectors, b"", 0),
         "x87": (x87_output(), b"", 0),
+        "sse": (struct.pack(
+            "<I12B4I", 0x1f80,
+            1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0,
+            0x1f80, 0x1f81, 0x1f82, 0x1fc0,
+        ), b"", 0),
     }
 
 

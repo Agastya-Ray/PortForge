@@ -15,6 +15,7 @@ on:
       - "corpus/m1/sse2-shifts*"
       - "corpus/m1/xmm-moves*"
       - "corpus/m1/sse-state*"
+      - "corpus/m1/sse-compare*"
       - "corpus/m1/check_memory_ops.sh"
       - "corpus/m1/check_scalar_storage.sh"
       - "corpus/m1/check_wide_integers.sh"
@@ -37,6 +38,7 @@ on:
       - "corpus/m1/sse2-shifts*"
       - "corpus/m1/xmm-moves*"
       - "corpus/m1/sse-state*"
+      - "corpus/m1/sse-compare*"
       - "corpus/m1/check_memory_ops.sh"
       - "corpus/m1/check_scalar_storage.sh"
       - "corpus/m1/check_wide_integers.sh"
@@ -71,7 +73,7 @@ jobs:
           rustup override set 1.85.1
           cargo fetch --locked
           mkdir -p evidence
-          for suite in lea scalar narrow-values integer-products console-ops sse2-memory sse2-shifts xmm-moves sse-state; do
+          for suite in lea scalar narrow-values integer-products console-ops sse2-memory sse2-shifts xmm-moves sse-state sse-compare; do
             bash corpus/m1/check_memory_ops.sh "$suite" > "evidence/$suite.txt"
             printf '%s ' "$suite"
             cat "evidence/$suite.txt"
@@ -98,7 +100,7 @@ jobs:
           rustup override set 1.85.1
           cargo fetch --locked
           mkdir -p evidence
-          for suite in lea scalar narrow-values integer-products console-ops sse2-memory sse2-shifts xmm-moves sse-state; do
+          for suite in lea scalar narrow-values integer-products console-ops sse2-memory sse2-shifts xmm-moves sse-state sse-compare; do
             bash corpus/m1/check_memory_ops.sh "$suite" > "evidence/$suite.txt"
             printf '%s ' "$suite"
             cat "evidence/$suite.txt"
